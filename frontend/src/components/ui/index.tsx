@@ -1,0 +1,485 @@
+import {
+  Children,
+  Fragment,
+  forwardRef,
+  isValidElement,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type ChangeEvent,
+  type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from 'react'
+import { createPortal } from 'react-dom'
+import type { Status } from '../../types'
+import { DEFAULT_BODY, PROVIDER_BODY, STATUS_COLOR, STATUS_LABEL } from '../../lib/theme'
+import { IconCheck, IconChevronDown, IconX } from './icons'
+
+export * from './icons'
+
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
+type ButtonSize = 'sm' | 'md'
+
+/*
+ * One button system for the whole app. Every variant shares the same radius, focus ring,
+ * hover timing and press feedback, so a row of controls always reads as one family.
+ */
+export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: ButtonSize }>(
+  function Button({ variant = 'secondary', size = 'md', className = '', ...rest }, ref) {
+    const base =
+      'inline-flex items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap select-none ' +
+      'transition-[background-color,border-color,color,transform,opacity,box-shadow] duration-150 ease-out ' +
+      'active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none motion-reduce:active:scale-100'
+    const sizes: Record<ButtonSize, string> = { sm: 'h-7 px-2.5 text-[12px]', md: 'h-8 px-3 text-[13px]' }
+    const variants: Record<ButtonVariant, string> = {
+      primary: 'bg-ink text-canvas shadow-sm shadow-black/30 hover:bg-white [&_kbd]:border-black/10 [&_kbd]:bg-black/[0.06] [&_kbd]:text-canvas/70',
+      secondary: 'border border-line bg-surface text-ink hover:border-line-strong hover:bg-hover',
+      ghost: 'text-muted hover:bg-white/[0.05] hover:text-ink',
+      danger: 'border border-danger/25 bg-danger/10 text-danger-soft hover:border-danger/40 hover:bg-danger/15',
+    }
+    return <button ref={ref} className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest} />
+  },
+)
+
+/** One surface for everything that floats over the canvas: legend, zoom, hints, toasts. */
+export const floatingSurface = 'border border-white/[0.07] bg-popover/90 shadow-float backdrop-blur-md'
+
+export function Kbd({ children }: { children: ReactNode }) {
+  return <kbd className="rounded border border-line bg-white/[0.04] px-1.5 py-px font-mono text-[10px] leading-4 text-faint">{children}</kbd>
+}
+
+export function StatusPill({ status, detail, compact = false }: { status: Status; detail?: string; compact?: boolean }) {
+  const color = STATUS_COLOR[status]
+  return (
+    <span
+      className="inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+      style={{ color, borderColor: `${color}33`, background: `${color}12` }}
+      title={detail || STATUS_LABEL[status]}
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+      <span className="shrink-0">{STATUS_LABEL[status]}</span>
+      {!compact && detail && <span className="truncate font-normal opacity-70">· {detail}</span>}
+    </span>
+  )
+}
+
+/** A provider's planet as a small badge: the same body colour and mark used on the canvas. */
+export function ProviderMark({ provider, size = 22 }: { provider: string; size?: number }) {
+  const body = PROVIDER_BODY[provider] ?? DEFAULT_BODY
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-canvas shadow-inner shadow-black/20"
+      style={{
+        width: size,
+        height: size,
+        fontSize: Math.round(size * 0.46),
+        background: `radial-gradient(circle at 34% 30%, ${body.glow}, ${body.base} 62%, ${body.base}bb 100%)`,
+        boxShadow: `0 0 ${Math.round(size * 0.6)}px -2px ${body.glow}55`,
+      }}
+      aria-hidden="true"
+    >
+      {body.logo ? (
+        <svg viewBox="0 0 24 24" width={Math.round(size * 0.56)} height={Math.round(size * 0.56)} fill="rgba(9,9,11,0.8)" aria-hidden="true">
+          <path d={body.logo} />
+        </svg>
+      ) : (
+        body.mark
+      )}
+    </span>
+  )
+}
+
+type TagTone = 'neutral' | 'warn' | 'demo' | 'ok'
+
+export function Tag({ children, tone = 'neutral' }: { children: ReactNode; tone?: TagTone }) {
+  const tones: Record<TagTone, string> = {
+    neutral: 'border-line bg-white/[0.03] text-muted',
+    warn: 'border-warn/30 bg-warn/10 text-warn-soft',
+    demo: 'border-white/10 border-dashed bg-transparent text-faint',
+    ok: 'border-ok/30 bg-ok/10 text-ok',
+  }
+  return (
+    <span className={`inline-flex items-center rounded border px-1.5 py-px text-[10px] font-medium uppercase leading-4 tracking-[0.06em] ${tones[tone]}`}>
+      {children}
+    </span>
+  )
+}
+
+export function Field({ label, hint, children, htmlFor, icon }: { label: string; hint?: string; children: ReactNode; htmlFor?: string; icon?: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <label htmlFor={htmlFor} className="flex items-center gap-1.5 text-[12px] font-medium text-muted">
+        {icon && <span className="text-faint">{icon}</span>}
+        {label}
+      </label>
+      {children}
+      {hint && <p className="text-[11px] leading-relaxed text-faint">{hint}</p>}
+    </div>
+  )
+}
+
+const fieldClass =
+  'w-full rounded-md border border-line bg-surface px-2.5 text-[13px] text-ink placeholder:text-faint ' +
+  'outline-none transition-[border-color,box-shadow,background-color] duration-150 hover:border-line-strong ' +
+  'focus:border-white/30 focus:bg-canvas focus:ring-[3px] focus:ring-white/[0.07] ' +
+  'aria-invalid:border-danger/60 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line'
+
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className = '', ...rest }, ref) {
+  return <input ref={ref} className={`${fieldClass} h-8 ${className}`} {...rest} />
+})
+
+export function Textarea({ className = '', ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return <textarea className={`${fieldClass} min-h-[84px] resize-y py-2 leading-relaxed ${className}`} {...rest} />
+}
+
+type SelectOption = { value: string; label: string; disabled: boolean; group?: string }
+type OptionProps = { value?: string | number; disabled?: boolean; label?: string; children?: ReactNode }
+
+function textOf(node: ReactNode): string {
+  return Children.toArray(node)
+    .map((c) => (typeof c === 'string' || typeof c === 'number' ? String(c) : ''))
+    .join('')
+}
+
+/** Reads <option> and <optgroup> children, so callers keep the native markup. */
+function readOptions(children: ReactNode, group?: string, out: SelectOption[] = []): SelectOption[] {
+  Children.forEach(children, (child) => {
+    if (!isValidElement<OptionProps>(child)) return
+    if (child.type === 'optgroup') {
+      readOptions(child.props.children, child.props.label, out)
+    } else if (child.type === 'option') {
+      const label = textOf(child.props.children)
+      out.push({ value: String(child.props.value ?? label), label, disabled: !!child.props.disabled, group })
+    }
+  })
+  return out
+}
+
+/** Next enabled index from `from` in direction `dir`, wrapping. Returns `from` if nothing is enabled. */
+function stepEnabled(options: SelectOption[], from: number, dir: 1 | -1): number {
+  const n = options.length
+  let j = from < 0 ? (dir > 0 ? -1 : n) : from
+  for (let k = 0; k < n; k++) {
+    j = (j + dir + n) % n
+    if (!options[j].disabled) return j
+  }
+  return from
+}
+
+/**
+ * Custom dropdown with the same props as the native <select> it replaces: <option> children,
+ * value, onChange(e) with e.target.value, and an id for its label. The list is a portal, so it
+ * is never clipped by a scrolling dialog. Focus stays on the trigger (aria-activedescendant),
+ * which keeps the dialog's focus trap working.
+ */
+export function Select({
+  id,
+  value,
+  onChange,
+  disabled,
+  children,
+  className = '',
+  'aria-label': ariaLabel,
+}: Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size' | 'multiple'>) {
+  const options = useMemo(() => readOptions(children), [children])
+  const current = String(value ?? '')
+  const selectedIndex = options.findIndex((o) => o.value === current)
+  const selected = selectedIndex >= 0 ? options[selectedIndex] : undefined
+
+  const listId = useId()
+  const optionId = (i: number) => `${listId}-${i}`
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(-1)
+  const [pos, setPos] = useState<{ left: number; width: number; top?: number; bottom?: number } | null>(null)
+
+  const openList = () => {
+    if (disabled || options.length === 0) return
+    const start = selectedIndex >= 0 && !options[selectedIndex].disabled ? selectedIndex : stepEnabled(options, -1, 1)
+    setActive(start)
+    setPos(null)
+    setOpen(true)
+  }
+
+  const commit = (i: number) => {
+    const option = options[i]
+    if (!option || option.disabled) return
+    // Shaped like a change event, so existing `e.target.value` handlers keep working.
+    onChange?.({ target: { value: option.value } } as unknown as ChangeEvent<HTMLSelectElement>)
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  // Place the list under the trigger, or above it when there is no room below.
+  useLayoutEffect(() => {
+    if (!open) return
+    const trigger = triggerRef.current
+    const list = listRef.current
+    if (!trigger || !list) return
+    const r = trigger.getBoundingClientRect()
+    const below = window.innerHeight - r.bottom
+    const flip = below < list.offsetHeight + 8 && r.top > below
+    setPos({ left: r.left, width: r.width, ...(flip ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }) })
+  }, [open])
+
+  // Keep the active option in view.
+  useEffect(() => {
+    if (!open || active < 0) return
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [open, active])
+
+  // Close on any outside pointer, and when the page scrolls or resizes.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node
+      if (triggerRef.current?.contains(t) || listRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    const onScroll = (e: Event) => {
+      if (listRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    const onResize = () => setOpen(false)
+    document.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onResize)
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [open])
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!open) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        openList()
+      }
+      return
+    }
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        setActive((i) => stepEnabled(options, i, 1))
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        setActive((i) => stepEnabled(options, i, -1))
+        break
+      case 'Home':
+        e.preventDefault()
+        setActive(stepEnabled(options, -1, 1))
+        break
+      case 'End':
+        e.preventDefault()
+        setActive(stepEnabled(options, options.length, -1))
+        break
+      case 'Enter':
+      case ' ':
+        e.preventDefault()
+        commit(active)
+        break
+      case 'Escape':
+        e.preventDefault()
+        e.stopPropagation()
+        setOpen(false)
+        break
+      case 'Tab':
+        setOpen(false)
+        break
+      default:
+        // Type-ahead: jump to the next enabled option whose label starts with the typed character.
+        if (e.key.length === 1) {
+          const q = e.key.toLowerCase()
+          const n = options.length
+          for (let k = 1; k <= n; k++) {
+            const j = (active + k + n) % n
+            if (!options[j].disabled && options[j].label.toLowerCase().startsWith(q)) {
+              setActive(j)
+              break
+            }
+          }
+        }
+    }
+  }
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        id={id}
+        type="button"
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={() => (open ? setOpen(false) : openList())}
+        onKeyDown={onKeyDown}
+        className={`${fieldClass} flex h-8 cursor-pointer items-center justify-between gap-2 pl-2.5 pr-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+      >
+        <span className="truncate">{selected?.label ?? ''}</span>
+        <IconChevronDown size={14} className={`shrink-0 text-faint transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open &&
+        createPortal(
+          <div
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            data-listbox-open=""
+            style={pos ? { left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom } : { left: 0, top: 0, visibility: 'hidden' }}
+            className="fixed z-[60] max-h-72 overflow-y-auto rounded-lg border border-white/[0.08] bg-popover p-1 shadow-popover animate-fade-in"
+          >
+            {options.map((o, i) => (
+              <Fragment key={i}>
+                {o.group && (i === 0 || options[i - 1].group !== o.group) && (
+                  <div role="presentation" className="px-2 pb-1 pt-2 text-[11px] font-medium text-faint">
+                    {o.group}
+                  </div>
+                )}
+                <div
+                  id={optionId(i)}
+                  role="option"
+                  aria-selected={i === selectedIndex}
+                  aria-disabled={o.disabled || undefined}
+                  data-index={i}
+                  onMouseMove={() => !o.disabled && i !== active && setActive(i)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => commit(i)}
+                  className={`flex h-8 items-center justify-between gap-2 rounded-md px-2 text-[13px] ${
+                    o.disabled ? 'cursor-not-allowed text-faint opacity-50' : 'cursor-pointer text-ink'
+                  } ${i === active ? 'bg-white/[0.07]' : ''}`}
+                >
+                  <span className="truncate">{o.label}</span>
+                  {i === selectedIndex && <IconCheck size={12} className="shrink-0 text-muted" />}
+                </div>
+              </Fragment>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
+  )
+}
+
+export function Spinner({ label }: { label?: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-muted" role="status">
+      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/15 border-t-white/70 motion-reduce:animate-none" />
+      {label && <span className="text-[12px]">{label}</span>}
+    </span>
+  )
+}
+
+export function EmptyState({ title, body, action, icon }: { title: string; body: string; action?: ReactNode; icon?: ReactNode }) {
+  return (
+    <div className="flex max-w-sm flex-col items-center text-center">
+      {icon && <div className="mb-5 text-faint">{icon}</div>}
+      <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">{title}</h2>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{body}</p>
+      {action && <div className="mt-5">{action}</div>}
+    </div>
+  )
+}
+
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/** Modal dialog. Escape closes it, Tab stays inside it, and focus returns to the element that opened it. */
+export function Dialog({
+  title,
+  description,
+  onClose,
+  children,
+  footer,
+  width = 'max-w-lg',
+}: {
+  title: string
+  description?: string
+  onClose: () => void
+  children: ReactNode
+  footer?: ReactNode
+  width?: string
+}) {
+  const titleId = useId()
+  const panelRef = useRef<HTMLDivElement>(null)
+  // Read the latest close handler through a ref, so the effect below runs once
+  // and does not steal focus back on every render.
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+
+  useEffect(() => {
+    const opener = document.activeElement
+    const onKey = (e: KeyboardEvent) => {
+      // An open dropdown owns Escape and Tab; it closes itself first.
+      if (document.querySelector('[data-listbox-open]')) return
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        closeRef.current()
+        return
+      }
+      // Keep Tab inside the dialog so keyboard focus cannot wander into the page behind it.
+      const panel = panelRef.current
+      if (e.key !== 'Tab' || !panel) return
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
+      if (items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement
+      const outside = !(active instanceof Node) || !panel.contains(active)
+      if (e.shiftKey && (outside || active === first)) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && (outside || active === last)) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    panelRef.current?.querySelector<HTMLElement>('[data-autofocus], input, textarea, select')?.focus()
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      if (opener instanceof HTMLElement) opener.focus()
+    }
+  }, [])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <div className="absolute inset-0 animate-fade-in bg-black/60 backdrop-blur-[3px] motion-reduce:animate-none" onClick={onClose} aria-hidden="true" />
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className={`relative flex max-h-[86vh] w-full ${width} animate-dialog-in flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-popover shadow-popover motion-reduce:animate-none`}
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-3.5">
+          <div className="min-w-0">
+            <h2 id={titleId} className="text-[14px] font-semibold tracking-[-0.01em] text-ink">
+              {title}
+            </h2>
+            {description && <p className="mt-0.5 text-[12px] leading-relaxed text-muted">{description}</p>}
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close dialog" className="-mr-1.5 h-7 w-7 shrink-0 rounded-md px-0">
+            <IconX size={14} />
+          </Button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <footer className="flex items-center justify-end gap-2 border-t border-line bg-canvas/40 px-5 py-3">{footer}</footer>}
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,190 @@
+@import "tailwindcss";
+
+/*
+ * Orbit design tokens. Neutral near-black, with colour reserved for meaning:
+ * agent providers, live status and the selected object. Every colour in the app
+ * comes from this block. lib/theme.ts reads the same variables for the canvas,
+ * so the DOM and the planets can never drift apart.
+ *
+ * Text: ink is primary (#F4F4F5), muted is secondary (#A1A1AA), faint is muted (#71717A).
+ */
+@theme {
+  /* Surfaces, darkest to lightest */
+  --color-canvas: #09090b; /* main background, behind the universe */
+  --color-sidebar: #0d0d0f; /* side panels and the top bar */
+  --color-surface: #141416; /* cards, inputs, elevated rows */
+  --color-popover: #18181b; /* modals, menus, floating panels */
+  --color-hover: #1c1c20; /* hover fill on surfaces */
+
+  /* Borders. The base is #27272A; the soft variant is the same hue at lower opacity. */
+  --color-border: #27272a;
+  --color-line: rgb(39 39 42 / 0.6);
+  --color-line-strong: rgb(63 63 70 / 0.9);
+
+  /* Text */
+  --color-ink: #f4f4f5;
+  --color-muted: #a1a1aa;
+  --color-faint: #71717a;
+
+  /* Accent. Neutral on purpose: selection and focus are shown in white, not blue. */
+  --color-accent: #f4f4f5;
+  --color-focus: rgb(244 244 245 / 0.55);
+
+  /* Providers. Claude keeps its recognisable warm terracotta. */
+  --color-claude: #d97757;
+  --color-claude-glow: #f2a486;
+  --color-codex: #e4e4e7;
+  --color-codex-glow: #ffffff;
+
+  /* Agent status. Each state has a colour and, where it matters, a shape (see Universe). */
+  --color-status-idle: #71717a;
+  --color-status-thinking: #fde047;
+  --color-status-writing: #60a5fa;
+  --color-status-reading: #2dd4bf;
+  --color-status-waiting: #e4e4e7;
+  --color-status-completed: #4ade80;
+  --color-status-failed: #f87171;
+  --color-status-stopped: #8a8a93;
+
+  /* Semantic */
+  --color-warn: #f59e0b; /* conflicts, possible issues */
+  --color-warn-soft: #fcd34d;
+  --color-danger: #f87171;
+  --color-danger-soft: #fecaca;
+  --color-ok: #4ade80;
+
+  --font-sans: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, monospace;
+
+  --shadow-float: 0 12px 40px -12px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.03);
+  --shadow-popover: 0 24px 64px -16px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(255 255 255 / 0.04);
+
+  /* Motion. One easing for every entrance and exit. Durations: 120-140ms for small fades, 180-220ms for panels. */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-fade-in: fade-in 140ms ease-out;
+  --animate-dialog-in: dialog-in 180ms var(--ease-standard);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * Element resets live in @layer base. Unlayered rules beat every Tailwind utility,
+ * so an unlayered `button { padding: 0 }` would silently strip every <Button> variant.
+ */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button {
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  /* One focus treatment everywhere: a crisp white ring, never a coloured glow. */
+  button:focus-visible,
+  [role="tab"]:focus-visible,
+  [role="menuitem"]:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  ::selection {
+    background: rgb(244 244 245 / 0.16);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(255 255 255 / 0.1) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.09);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(255 255 255 / 0.16);
+    background-clip: padding-box;
+  }
+}
+
+/* Respect the OS setting: everything rests, and states still change instantly. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

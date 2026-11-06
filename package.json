@@ -1,0 +1,9 @@
+{
+  "name": "orbit",
+  "private": true,
+  "description": "Orbit desktop app. Scripts wrap the Wails CLI, which bundles the Go backend and the React frontend.",
+  "scripts": {
+    "dev": "wails dev",
+    "build": "wails build"
+  }
+}
