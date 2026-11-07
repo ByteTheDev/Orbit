@@ -1,33 +1,96 @@
-# README
+<p align="center">
+  <img src="build/appicon.png" alt="Orbit" width="160" />
+</p>
 
-## About
+# Orbit
 
-This is the official Wails React-TS template.
+> **One galaxy per project. One planet per agent.**  
+> A Wails v2 desktop app that orchestrates Claude Code and Codex CLI agents inside your git repositories — with a built-in terminal, diff review, conflict detection, and a native browser.
 
-You can configure the project by editing `wails.json`. More information about the project settings can be found
-here: https://wails.io/docs/reference/project-config
+## ✨ Features
 
-## Live Development
+- 🪐 **Galaxy view** — every project is a sun, every agent a planet orbiting it. Pan, zoom, and pick a project at a glance.
+- 🤖 **Multi-agent** — run Claude Code and Codex side by side in the same repo; mix models per turn.
+- 📝 **Diff & commit** — review per-file diffs, stage what you want, and commit from the Changes tab. No leaving the app.
+- ⚠️ **Conflict radar** — detects when two agents touch the same file before you merge.
+- 🖥️ **Embedded terminal** — a real PTY shell (ConPTY on Windows) rooted in the project.
+- 🌐 **Native browser** — a WebView2 page view plus a text-mode `browse_page` MCP tool agents can call.
+- 💾 **One-file state** — everything persists as a single versioned JSON file; easy to back up or move.
+- ⌨️ **Keyboard-first** — full shortcut map, shown in Settings › Keyboard.
 
-To run in live development mode, run `wails dev` in the project directory. This will run a Vite development
-server that will provide very fast hot reload of your frontend changes. If you want to develop in a browser
-and have access to your Go methods, there is also a dev server that runs on http://localhost:34115. Connect
-to this in your browser, and you can call your Go code from devtools.
+## 🚀 Quick start
 
-## Building
+```bash
+# Prerequisites: Go, Node.js, npm, Git, Wails v2 CLI
+# plus the agent CLIs you want (claude, codex) on PATH
 
-To build a redistributable, production mode package, use `wails build`.
+git clone https://github.com/spoiled/Orbit.git
+cd Orbit
+wails dev
+```
 
-## macOS and Linux
+Open the dev server at `http://localhost:34115` to call Go methods from devtools, or use the app window directly.
 
-Build on the target OS with Go, Node.js, npm, Git, and the Wails v2 CLI installed.
-Follow the [Wails platform prerequisites](https://wails.io/docs/gettingstarted/installation/),
-including Xcode command line tools on macOS or the GTK and WebKit development
-packages on Linux. Run `wails dev` for development or `wails build` for a
-production build. Install and sign in to the agent CLIs separately, and make
-sure they are on the PATH available to Orbit when launched.
+## 🛠️ Build
 
-The terminal uses `$SHELL`, falling back to `/bin/sh`. The embedded native
-browser view currently requires Windows; macOS and Linux use the browser's
-text view. macOS and Linux desktop builds and runtime behavior still need
-verification on those platforms.
+```bash
+# Production build
+wails build
+
+# Output: build/bin/Orbit (or Orbit.exe on Windows)
+```
+
+Platform notes:
+
+- **Windows** — full feature set, including the native browser view.
+- **macOS / Linux** — build on the target OS with Go, Node, npm, Git, and Wails v2. The terminal uses `$SHELL` (falling back to `/bin/sh`); the native browser view currently falls back to the text view. Desktop runtime behavior on these platforms still needs verification.
+
+Install and sign in to the agent CLIs separately, and make sure they are on the `PATH` available to Orbit when launched.
+
+## 🧪 Development
+
+```bash
+# Go tests
+go test ./...
+
+# Frontend tests
+cd frontend && npm test
+
+# Frontend typecheck
+cd frontend && npm run typecheck
+```
+
+## 🗂️ Project layout
+
+```
+Orbit/
+├── main.go                 # Wails entrypoint
+├── app.go                  # Bound App methods
+├── internal/
+│   ├── agent/              # Projects, agents, turns, event batching
+│   ├── browser/            # Fetch + browse_page MCP server
+│   ├── conflict/           # Cross-agent file conflict detection
+│   ├── gitdiff/            # Diff, status, stage, commit
+│   ├── provider/           # Claude Code & Codex adapters
+│   ├── store/              # Single-file persistence
+│   ├── terminal/           # PTY shells
+│   └── webpane/            # Native page view (Windows)
+└── frontend/               # React + TypeScript (Vite)
+    └── src/
+        ├── lib/            # Pure logic, store, bridge, actions
+        └── components/     # UI
+```
+
+## 📡 Backend ↔ frontend contract
+
+- Frontend calls Go through `frontend/src/lib/bridge.ts` (generated bindings in `frontend/wailsjs/` — do not edit).
+- Go pushes updates on the `orbit:events` channel; terminals use `terminal:output` / `terminal:exit`.
+- Empty collections serialize as `[]`, never `null`.
+
+## 🤝 Contributing
+
+Issues and PRs welcome. Keep pure logic in `lib/` and `internal/` free of React/Wails so it stays unit-testable, and route user-facing failures through toasts in `actions.ts`.
+
+---
+
+Built with [Wails v2](https://wails.io) · [React](https://react.dev) · [TypeScript](https://www.typescriptlang.org) · [Vite](https://vitejs.dev)
