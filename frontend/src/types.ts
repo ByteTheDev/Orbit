@@ -212,6 +212,8 @@ export interface ToolCall {
   output: string
   status: 'running' | 'ok' | 'error'
   at: number
+  /** When the result arrived. Absent while the tool is still running. */
+  endedAt?: number
 }
 
 export interface ActivityEntry {
@@ -325,11 +327,41 @@ export interface Snapshot {
   version: string
 }
 
+/** git's view of one file, as the Changes tab reports it. Null in the result when the file is unchanged. */
+export interface GitFileState {
+  index: string
+  worktree: string
+  staged: boolean
+  unstaged: boolean
+  untracked: boolean
+  oldPath?: string
+}
+
 export interface FileDiffResult {
   path: string
+  /** Relative to the project folder, as the file APIs expect. Empty when the path is outside it. */
+  rel: string
+  /** The diff of the agent's latest recorded edit to this file. */
   recorded: string
+  /** The working tree against HEAD, from git. Empty when there is no change or no repository. */
   gitDiff: string
+  /** Why there is no git diff, when there is none for a reason other than no change. */
   gitNotice: string
+  exists: boolean
+  size: number
+  /** Unix milliseconds. */
+  modTime: number
+  git: GitFileState | null
+}
+
+/** One recorded read or write of a file by an agent in the same project. */
+export interface FileEvent {
+  agentId: string
+  agentName: string
+  op: 'read' | 'write'
+  tool: string
+  /** Unix milliseconds. */
+  at: number
 }
 
 /** One changed path from `git status`. A path can be staged and unstaged at once. */
@@ -342,6 +374,8 @@ export interface GitChange {
   /** git's one-letter codes for the index and worktree sides (M, A, D, R, ?, space). */
   index: string
   worktree: string
+  /** Git could not merge this path. It must be edited, then staged. */
+  conflicted: boolean
 }
 
 export interface GitStatus {
@@ -349,6 +383,13 @@ export interface GitStatus {
   branch: string
   hasCommits: boolean
   changes: GitChange[]
+  /** The remote branch this branch tracks. Empty when there is none. */
+  upstream: string
+  ahead: number
+  behind: number
+  /** Whether the repository has any remote. Fetch, pull and push need one. */
+  remote: boolean
+  conflicts: number
 }
 
 export interface GitCommit {
@@ -358,6 +399,72 @@ export interface GitCommit {
   author: string
   /** Unix milliseconds. */
   at: number
+  /** The agent that wrote this commit, from its Orbit-Agent trailer. Empty for other commits. */
+  agent: string
+}
+
+export interface GitCommitFile {
+  path: string
+  oldPath?: string
+  /** A added, M modified, D deleted, R renamed, C copied, T type changed. */
+  status: string
+  additions: number
+  deletions: number
+  binary: boolean
+}
+
+export interface GitCommitDetail extends GitCommit {
+  body: string
+  files: GitCommitFile[]
+}
+
+/** One change to discard. Mirrors gitdiff.DiscardTarget. */
+export interface GitDiscardTarget {
+  path: string
+  oldPath?: string
+  index: string
+  worktree: string
+  untracked: boolean
+}
+
+/** One entry in the Files sidebar: a file or folder, relative to the project root. */
+export interface FileEntry {
+  name: string
+  path: string
+  isDir: boolean
+  link?: boolean
+  size: number
+  /** Unix milliseconds. */
+  modTime: number
+}
+
+export interface FileListing {
+  entries: FileEntry[]
+  truncated: boolean
+}
+
+export interface FileMatches {
+  entries: FileEntry[]
+  truncated: boolean
+}
+
+/** A file loaded for the editor. Binary and oversized files come back without content. */
+export interface FileText {
+  path: string
+  content: string
+  size: number
+  modTime: number
+  binary: boolean
+  tooLarge: boolean
+}
+
+/** A debounced batch of changes in the watched project. */
+export interface ProjectFilesChange {
+  projectId: string
+  /** Folders whose contents changed, relative to the root. The root is "". */
+  dirs: string[]
+  /** Branch, HEAD or history moved. */
+  git: boolean
 }
 
 export interface LaunchRequest {
@@ -377,6 +484,8 @@ export interface LaunchRequest {
   branch: string
   /** Create `branch` from HEAD instead of using an existing one. */
   newBranch: boolean
+  /** Images pasted into the task box. They go with the first message. Empty when there are none. */
+  images: ImageUpload[]
 }
 
 /** A project's git branches, for the launch dialog. */

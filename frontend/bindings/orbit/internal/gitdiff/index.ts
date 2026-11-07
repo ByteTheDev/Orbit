@@ -3,6 +3,10 @@
 
 export type {
     Change,
+    CommitDetail,
+    CommitFile,
     CommitInfo,
+    DiscardTarget,
+    FileState,
     RepoStatus
 } from "./models.js";

@@ -7,7 +7,7 @@ import { baseName, dirName, timeAgo } from '../../lib/format'
 import type { GitChange, GitCommit, GitStatus } from '../../types'
 import { Button, Spinner, SwitchGlyph } from '../ui'
 import { FileIcon } from '../ui/FileIcon'
-import { DiffView } from '../dialogs/Dialogs'
+import { CodeDiff } from '../diff/CodeDiff'
 import { IconBranch, IconCommit } from './inspectorIcons'
 
 /**
@@ -193,8 +193,18 @@ export function GitTab({ projectId, agentStatus }: { projectId: string; agentSta
             </p>
             {diffError && <p className="text-caption text-danger-soft">{diffError}</p>}
             {!diffError && diff === null && <Spinner label="Loading diff…" />}
-            {diff !== null &&
-              (diff.trim() ? <DiffView text={diff} /> : <p className="text-caption text-faint">No textual changes to show.</p>)}
+            {diff !== null && (
+              // CodeDiff virtualises its rows, so it needs a bounded height to scroll inside.
+              <div className="flex h-72 flex-col overflow-hidden rounded-lg border border-line">
+                <CodeDiff
+                  text={diff}
+                  path={selected.change.path}
+                  kind="git"
+                  emptyTitle="No textual changes"
+                  emptyBody="Git reports no text changes for this file, such as a binary file or a mode change."
+                />
+              </div>
+            )}
           </div>
         )}
 

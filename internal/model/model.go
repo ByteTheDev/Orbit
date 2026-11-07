@@ -191,6 +191,8 @@ type ToolCall struct {
 	Output  string `json:"output"`
 	Status  string `json:"status"` // running | ok | error
 	At      int64  `json:"at"`
+	// EndedAt is when the result arrived. Zero while running, so the UI shows real duration only.
+	EndedAt int64 `json:"endedAt,omitempty"`
 }
 
 // MaxSubAgents bounds the sub-agents kept per agent. Old finished ones fall off first.
@@ -336,6 +338,8 @@ type AgentRecord struct {
 	Provider       string `json:"provider"`
 	Model          string `json:"model"`
 	Task           string `json:"task"`
+	// StatusSetAt is when the current status was shown (Unix ms). Manager-only; not serialised.
+	StatusSetAt int64 `json:"-"`
 	// Branch is the git branch the agent works on, when it was launched on a worktree.
 	Branch string `json:"branch,omitempty"`
 	// WorkDir is the folder the agent runs in: its worktree, or the project folder when empty.

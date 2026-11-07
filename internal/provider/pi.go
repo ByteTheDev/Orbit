@@ -95,6 +95,7 @@ func fetchPiModels() []model.ModelOption {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, d.Path, "--list-models")
+	configureProcess(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return []model.ModelOption{}

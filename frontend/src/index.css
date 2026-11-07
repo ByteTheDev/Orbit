@@ -496,10 +496,13 @@
 }
 
 /*
+ * Google Material Symbols. The sidebar's Files and Git views use the outlined style; the rest of the app
+ * keeps Rounded. The glyph is a ligature: the element's text is the icon name.
  * Google Material Symbols (Rounded). The glyph is a ligature: the element's text is the icon name.
  * MaterialIcon sets the box size, so the icon fills it exactly like the SVG icons it replaces.
  */
-.material-symbols-rounded {
+.material-symbols-rounded,
+.material-symbols-outlined {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
@@ -518,6 +521,61 @@
   font-feature-settings: "liga";
   font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
   user-select: none;
+}
+
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined";
+}
+
+/*
+ * Code diff. Syntax colours come from highlight.js classes, mapped to the palette so they sit
+ * quietly beside the green and red line tints. Changed words get a stronger tint than their line.
+ */
+.diff-code .hljs-keyword,
+.diff-code .hljs-selector-tag,
+.diff-code .hljs-built_in,
+.diff-code .hljs-type {
+  color: #93c5fd;
+}
+.diff-code .hljs-string,
+.diff-code .hljs-template-variable,
+.diff-code .hljs-regexp {
+  color: #fcd34d;
+}
+.diff-code .hljs-number,
+.diff-code .hljs-literal,
+.diff-code .hljs-symbol {
+  color: #fdba74;
+}
+.diff-code .hljs-title,
+.diff-code .hljs-function .hljs-title,
+.diff-code .hljs-title.function_,
+.diff-code .hljs-attr,
+.diff-code .hljs-property,
+.diff-code .hljs-variable {
+  color: #e4e4e7;
+}
+.diff-code .hljs-comment,
+.diff-code .hljs-doctag,
+.diff-code .hljs-meta {
+  color: var(--color-faint);
+  font-style: italic;
+}
+.diff-code .hljs-tag,
+.diff-code .hljs-name,
+.diff-code .hljs-section {
+  color: #5eead4;
+}
+.diff-word {
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+}
+.diff-row-add .diff-word {
+  background: color-mix(in srgb, var(--color-ok) 24%, transparent);
+}
+.diff-row-del .diff-word {
+  background: color-mix(in srgb, var(--color-danger) 26%, transparent);
 }
 
 /* Fast mode switching on: a bolt of light crosses the track, a ring pulses out, and the bolt icon kicks.

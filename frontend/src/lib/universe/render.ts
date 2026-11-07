@@ -262,35 +262,16 @@ export function drawUniverse(ctx: CanvasRenderingContext2D, view: ViewState, bac
     drawSun(ctx, s.x, s.y, identityFor(sun.id).accent, cam.zoom, view.now, view.reduced)
     const project = view.projects.get(sun.id)
     const label = project?.name ?? sun.name
-    const labelY = s.y + Math.max(10, SUN_RADIUS * cam.zoom) + 6
-
-    ctx.font = '600 14px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
-    const nameW = ctx.measureText(label).width
+    const labelTop = s.y + Math.max(10, SUN_RADIUS * cam.zoom) + 2
     const meta = project ? systemMeta(project) : ''
-    ctx.font = '10px "Segoe UI", system-ui, sans-serif'
-    const metaW = meta ? ctx.measureText(meta).width : 0
-    const half = Math.max(nameW, metaW) / 2 + 22
-    const box: LabelBox = { x0: s.x - half, x1: s.x + half, y0: labelY - 2, y1: labelY + (meta ? 28 : 16) }
+    const icon = project ? projectIconImage(project.id, project.iconRev ?? 0) : undefined
+    const hasIcon = !!project && ((!!icon && icon.naturalWidth > 0) || !!project.icon?.trim())
+    const geo = layoutSystemLabel(ctx, s.x, labelTop, label, project, hasIcon, meta)
     const important = sun.id === view.selectedId || sun.id === view.hoverId
-    if (!important && placed.some((b) => overlaps(b, box))) continue
-    placed.push(box)
+    if (!important && placed.some((b) => overlaps(b, geo.pill))) continue
+    placed.push(geo.pill)
 
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    // A soft dark backdrop keeps the name readable over bright nebula without adding a shadow blur.
-    drawLabelBackdrop(ctx, box)
-    ctx.font = '600 14px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
-    ctx.fillStyle = withAlpha(S.ink, 0.9)
-    if (project) drawProjectBadge(ctx, s.x - nameW / 2 - 14, labelY + 7, project)
-    ctx.fillText(label, s.x, labelY)
-    if (project && project.conflicts.length > 0) {
-      drawBadge(ctx, s.x + nameW / 2 + 12, labelY + 8, `${project.conflicts.length}`, '#f59e0b')
-    }
-    if (meta) {
-      ctx.font = '11px "Segoe UI", system-ui, sans-serif'
-      ctx.fillStyle = S.muted
-      ctx.fillText(meta, s.x, labelY + 16)
-    }
+    drawSystemLabel(ctx, geo, identityFor(sun.id).accent, label, project, meta)
   }
 
   // Beams sit under the planets, so their ends tuck behind the bodies they connect.
@@ -1163,16 +1144,116 @@ function drawRock(
   }
 }
 
-/** A faint, rounded dark pill behind a system's label. Kept very low-alpha so it reads as depth, not a box. */
-function drawLabelBackdrop(ctx: CanvasRenderingContext2D, box: LabelBox): void {
-  const x = box.x0 + 6
-  const y = box.y0 - 2
-  const width = box.x1 - box.x0 - 12
-  const height = box.y1 - box.y0 + 4
-  ctx.fillStyle = withAlpha(S.canvas, 0.38)
+const LABEL_NAME_FONT = '600 14px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
+const LABEL_META_FONT = '11px "Segoe UI", system-ui, sans-serif'
+const LABEL_ICON = 18
+const LABEL_GAP = 8
+const LABEL_BADGE = 16
+const LABEL_PAD_X = 12
+const LABEL_PAD_TOP = 7
+const LABEL_ROW = 20
+const LABEL_META_ROW = 16
+const LABEL_PAD_BOTTOM = 8
+const RUNNING_GREEN = '#34d399'
+
+/** Geometry of a system label: the card, and the centre points of each row's parts. */
+interface SystemLabel {
+  pill: LabelBox
+  row1Y: number
+  row2Y: number
+  iconX: number | null
+  nameX: number
+  badgeX: number | null
+  dotX: number
+  metaX: number
+  hasMeta: boolean
+}
+
+/**
+ * Measures a system label as a card centred on x. Row one holds the icon, the name and the
+ * conflict count. Row two holds a status dot and the agent summary.
+ */
+function layoutSystemLabel(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  top: number,
+  label: string,
+  project: ProjectSummary | undefined,
+  hasIcon: boolean,
+  meta: string,
+): SystemLabel {
+  ctx.font = LABEL_NAME_FONT
+  const nameW = ctx.measureText(label).width
+  const conflicts = project?.conflicts.length ?? 0
+  const row1W = (hasIcon ? LABEL_ICON + LABEL_GAP : 0) + nameW + (conflicts > 0 ? LABEL_GAP + LABEL_BADGE : 0)
+  ctx.font = LABEL_META_FONT
+  const row2W = meta ? 6 + 6 + ctx.measureText(meta).width : 0
+  const contentW = Math.max(row1W, row2W)
+  const width = contentW + LABEL_PAD_X * 2
+  const height = LABEL_PAD_TOP + LABEL_ROW + (meta ? LABEL_META_ROW : 0) + LABEL_PAD_BOTTOM
+  const row1Y = top + LABEL_PAD_TOP + LABEL_ROW / 2
+  const row1Left = x - row1W / 2
+  const iconX = hasIcon ? row1Left + LABEL_ICON / 2 : null
+  const nameX = row1Left + (hasIcon ? LABEL_ICON + LABEL_GAP : 0)
+  const badgeX = conflicts > 0 ? nameX + nameW + LABEL_GAP + LABEL_BADGE / 2 : null
+  const row2Left = x - row2W / 2
+  return {
+    pill: { x0: x - width / 2, x1: x + width / 2, y0: top, y1: top + height },
+    row1Y,
+    row2Y: row1Y + LABEL_ROW / 2 + LABEL_META_ROW / 2,
+    iconX,
+    nameX,
+    badgeX,
+    dotX: row2Left + 3,
+    metaX: row2Left + 12,
+    hasMeta: meta !== '',
+  }
+}
+
+/**
+ * Draws a system label as a dark card tinted by the system's accent. The card is opaque enough
+ * that the muted agent line stays readable over bright nebula. The status dot is green while
+ * agents run, so activity shows without reading the text.
+ */
+function drawSystemLabel(
+  ctx: CanvasRenderingContext2D,
+  geo: SystemLabel,
+  accent: string,
+  label: string,
+  project: ProjectSummary | undefined,
+  meta: string,
+): void {
+  const { pill } = geo
+  const w = pill.x1 - pill.x0
+  const h = pill.y1 - pill.y0
   ctx.beginPath()
-  ctx.roundRect(x, y, width, height, 8)
+  ctx.roundRect(pill.x0, pill.y0, w, h, 10)
+  ctx.fillStyle = withAlpha(S.canvas, 0.78)
   ctx.fill()
+  ctx.lineWidth = 1
+  ctx.strokeStyle = withAlpha(accent, 0.5)
+  ctx.stroke()
+
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  if (project && geo.iconX !== null) drawProjectBadge(ctx, geo.iconX, geo.row1Y, project)
+  ctx.font = LABEL_NAME_FONT
+  ctx.fillStyle = withAlpha(S.ink, 0.95)
+  ctx.fillText(label, geo.nameX, geo.row1Y)
+  if (project && geo.badgeX !== null) {
+    drawBadge(ctx, geo.badgeX, geo.row1Y, `${project.conflicts.length}`, '#f59e0b')
+  }
+  if (geo.hasMeta) {
+    const running = (project?.runningCount ?? 0) > 0
+    ctx.beginPath()
+    ctx.arc(geo.dotX, geo.row2Y, 3, 0, TAU)
+    ctx.fillStyle = running ? RUNNING_GREEN : withAlpha(S.muted, 0.7)
+    ctx.fill()
+    ctx.textAlign = 'left'
+    ctx.font = LABEL_META_FONT
+    ctx.fillStyle = S.muted
+    ctx.fillText(meta, geo.metaX, geo.row2Y)
+  }
 }
 
 function drawBadge(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color: string): void {

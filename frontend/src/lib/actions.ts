@@ -479,3 +479,22 @@ export async function acknowledgeAgent(agentId: string): Promise<void> {
 
 // Opening a finished agent (see selectAgent in store.ts) clears its completed mark.
 setOnOpenFinished((id) => void acknowledgeAgent(id))
+
+/** Copies text to the clipboard and confirms with a toast. `what` names the copied thing, such as "Path". */
+export async function copyText(text: string, what: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+    toast(`${what} copied`, 'success')
+  } catch {
+    toast('Could not copy to the clipboard', 'error')
+  }
+}
+
+/** Opens a file of the agent's project in the system's default application. */
+export async function openProjectFile(agentId: string, path: string): Promise<void> {
+  try {
+    await api.openProjectFile(agentId, path)
+  } catch (err) {
+    toast(errorText(err), 'error')
+  }
+}

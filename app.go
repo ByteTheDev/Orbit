@@ -14,8 +14,10 @@ import (
 
 	"orbit/internal/agent"
 	"orbit/internal/browser"
+	"orbit/internal/files"
 	"orbit/internal/gitdiff"
 	"orbit/internal/model"
+	"orbit/internal/opener"
 	"orbit/internal/provider"
 	"orbit/internal/release"
 	"orbit/internal/store"
@@ -65,6 +67,9 @@ type App struct {
 	// The native page view for the browser dialog. Created on first use, then reused.
 	paneMu sync.Mutex
 	pane   *webpane.Pane
+
+	// Watches the project folders the Files sidebar shows, and the git metadata. Created in startup.
+	watcher *files.Watcher
 }
 
 // NewApp builds the backend. Wails calls startup once the window exists.
@@ -105,10 +110,14 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.mgr.Load(st)
 	go a.runSchedule(ctx)
+	a.startWatcher()
 }
 
 func (a *App) shutdown(context.Context) {
 	a.terms.CloseAll()
+	if a.watcher != nil {
+		a.watcher.Stop()
+	}
 	a.saveNow()
 }
 
@@ -269,12 +278,17 @@ func (a *App) GetAgentDetail(agentID string) (model.AgentDetail, error) {
 	return a.mgr.Detail(agentID)
 }
 
-// FileDiffResult carries the diff Orbit recorded and, when available, the git diff.
+// FileDiffResult carries the diff Orbit recorded, the git diff, and the file's state on disk.
 type FileDiffResult struct {
-	Path      string `json:"path"`
-	Recorded  string `json:"recorded"`
-	GitDiff   string `json:"gitDiff"`
-	GitNotice string `json:"gitNotice"`
+	Path      string             `json:"path"`
+	Rel       string             `json:"rel"` // relative to the project folder, as the file APIs expect; empty outside it
+	Recorded  string             `json:"recorded"`
+	GitDiff   string             `json:"gitDiff"`
+	GitNotice string             `json:"gitNotice"`
+	Exists    bool               `json:"exists"`
+	Size      int64              `json:"size"`
+	ModTime   int64              `json:"modTime"` // unix milliseconds
+	Git       *gitdiff.FileState `json:"git"`
 }
 
 // GetFileDiff returns the diff for one file touched by an agent.
@@ -299,16 +313,76 @@ func (a *App) GetFileDiff(agentID, path string) (FileDiffResult, error) {
 	if err != nil {
 		return res, err
 	}
-	diff, err := gitdiff.File(repo, path)
-	switch {
-	case errors.Is(err, gitdiff.ErrNotGit):
+	if rel, err := gitdiff.Rel(repo, path); err == nil {
+		res.Rel = rel
+		if info, err := os.Stat(filepath.Join(repo, filepath.FromSlash(rel))); err == nil {
+			res.Exists = true
+			res.Size = info.Size()
+			res.ModTime = info.ModTime().UnixMilli()
+		}
+	}
+	// A status error means the folder is not a repository, which the diff below reports.
+	if state, err := gitdiff.StatusOf(repo, path); err == nil {
+		res.Git = state
+	}
+	var diff string
+	if res.Git != nil && res.Git.Untracked {
+		// An untracked file has no HEAD version, so its whole content is the change.
+		diff, err = gitdiff.Diff(repo, path, false, true)
+	} else {
+		diff, err = gitdiff.File(repo, path)
+	}
+	if err != nil {
 		res.GitNotice = err.Error()
-	case err != nil:
-		res.GitNotice = err.Error()
-	default:
+	} else {
 		res.GitDiff = diff
 	}
 	return res, nil
+}
+
+// GetFileTimeline lists every recorded read and write of a file by the agents in its project.
+func (a *App) GetFileTimeline(agentID, path string) ([]model.FileEvent, error) {
+	return a.mgr.FileTimeline(agentID, path)
+}
+
+// GetFileHistory lists the commits that changed a file, newest first.
+func (a *App) GetFileHistory(agentID, path string) ([]gitdiff.CommitInfo, error) {
+	repo, err := a.mgr.ProjectPath(agentID)
+	if err != nil {
+		return nil, err
+	}
+	return gitdiff.FileLog(repo, path)
+}
+
+// GetCommitFileDiff returns the change one commit made to a file.
+func (a *App) GetCommitFileDiff(agentID, rev, path string) (string, error) {
+	repo, err := a.mgr.ProjectPath(agentID)
+	if err != nil {
+		return "", err
+	}
+	return gitdiff.CommitFileDiff(repo, rev, path)
+}
+
+// GetFileAtCommit returns a file's content as it was in one commit.
+func (a *App) GetFileAtCommit(agentID, rev, path string) (string, error) {
+	repo, err := a.mgr.ProjectPath(agentID)
+	if err != nil {
+		return "", err
+	}
+	return gitdiff.FileAt(repo, rev, path)
+}
+
+// OpenProjectFile opens a file of the agent's project in the system's default application.
+func (a *App) OpenProjectFile(agentID, path string) error {
+	repo, err := a.mgr.ProjectPath(agentID)
+	if err != nil {
+		return err
+	}
+	rel, err := gitdiff.Rel(repo, path)
+	if err != nil {
+		return err
+	}
+	return opener.Open(filepath.Join(repo, filepath.FromSlash(rel)))
 }
 
 // ---- projects -------------------------------------------------------------

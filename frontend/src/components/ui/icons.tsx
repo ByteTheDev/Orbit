@@ -12,12 +12,15 @@ export interface IconProps {
   style?: CSSProperties
 }
 
-/** One Material Symbols glyph, by its ligature name (for example "add" or "settings"). */
-export function MaterialIcon({ name, size = 16, className = '', style }: IconProps & { name: string }) {
+/**
+ * One Material Symbols glyph, by its ligature name (for example "add" or "settings").
+ * `outlined` picks the Outlined style instead of the Rounded one the rest of the app uses.
+ */
+export function MaterialIcon({ name, size = 16, className = '', style, outlined = false }: IconProps & { name: string; outlined?: boolean }) {
   return (
     <span
       aria-hidden="true"
-      className={`material-symbols-rounded ${className}`}
+      className={`${outlined ? 'material-symbols-outlined' : 'material-symbols-rounded'} ${className}`}
       style={{ width: size, height: size, fontSize: size, ...style }}
     >
       {name}

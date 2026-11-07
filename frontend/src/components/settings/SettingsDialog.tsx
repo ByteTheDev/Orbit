@@ -20,6 +20,7 @@ import { SHORTCUTS } from '../../lib/shortcuts'
 import { approveTheme, checkForUpdates, openReleasePage, readThemeFile } from '../../lib/actions'
 import { APP_VERSION, isNewer, releaseSummary } from '../../lib/release'
 import { withDefaultModel } from '../../lib/defaultModel'
+import { RISKY_PERMISSION_MODES, withDefaultPermission } from '../../lib/defaultPermission'
 import type { ReleaseInfo } from '../../types'
 import { Button, Dialog, Kbd, ModelPicker, ProviderMark, Select, SwitchGlyph } from '../ui'
 
@@ -266,6 +267,48 @@ function ModelsSection() {
                   />
                 ) : (
                   <span className="text-caption text-faint">{p.name} picks its own model.</span>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      </Group>
+      <Group
+        title="Default permissions"
+        hint="The access level a new agent starts with, for each provider. Provider default uses the first mode the provider lists. You can still change it for one agent at launch."
+      >
+        <ul className="space-y-2.5" aria-label="Default permissions per provider">
+          {providers.map((p) => {
+            const modes = p.capabilities.permissionModes ?? []
+            const saved = settings.defaultPermissions[p.id] ?? ''
+            const risky = RISKY_PERMISSION_MODES.has(saved)
+            return (
+              <li key={p.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] items-start gap-3">
+                <span className="flex min-w-0 items-center gap-2 pt-1.5">
+                  <ProviderMark provider={p.id} size={16} />
+                  <span className="truncate text-body text-ink">{p.name}</span>
+                  {!p.available && <span className="shrink-0 text-label text-faint">Not installed</span>}
+                </span>
+                {modes.length > 0 ? (
+                  <div className="min-w-0 space-y-1">
+                    <Select
+                      value={saved}
+                      onChange={(e) =>
+                        setSettings({ defaultPermissions: withDefaultPermission(settings.defaultPermissions, p.id, e.target.value) })
+                      }
+                      aria-label={`Default permissions for ${p.name}`}
+                    >
+                      <option value="">Provider default</option>
+                      {modes.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </Select>
+                    {risky && <p className="text-label text-warn-soft">New {p.name} agents act without asking. Pick a safer default if unsure.</p>}
+                  </div>
+                ) : (
+                  <span className="pt-1.5 text-caption text-faint">{p.name} sets its own permissions.</span>
                 )}
               </li>
             )

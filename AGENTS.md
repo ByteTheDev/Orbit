@@ -17,7 +17,8 @@ Orbit is a Wails v3 desktop app: a Go backend plus a React/TypeScript frontend. 
 | `internal/browser/` | Fetches web pages (text, title, links) for the built-in browser and for agents. `mcp.go` is the `browse_page` tool; `main.go` serves it when run with `--browser-mcp`. Providers register it per turn (`BrowserCommand` in `provider.Spec`). |
 | `internal/webpane/` | Native page view for the browser dialog. On Windows, a WebView2 (Chromium) control in a child window over the dialog's viewport, on its own thread. `pane_other.go` is the non-Windows stub. Page state reaches the UI as `browser:pane` events. |
 | `frontend/src/components/browser/` | The built-in browser dialog: tab strip, toolbar, and the native viewport (or the text view as fallback). Pure helpers are in `lib/browserNav.ts` (history) and `lib/browserPane.ts` (viewport bounds, address parts, landings). |
-| `internal/gitdiff/` | Git operations on a project's repo: the file inspector's diff (`gitdiff.go`), and status, per-file diffs, log, stage, unstage and commit (`repo.go`) for the Changes tab and auto-commit. Windows-specific hiding in `hide_windows.go`. |
+| `internal/gitdiff/` | Git operations on a project's repo: the file inspector's diff (`gitdiff.go`), and status, per-file diffs, log, stage, unstage and commit (`repo.go`) for the Changes tab and auto-commit. `ops.go` holds fetch, pull, push, discard and branch switching; `history.go` holds paged log with agent trailers, commit detail and per-file commit diffs; `ignore.go` asks git which paths are ignored. Windows-specific hiding in `hide_windows.go`. |
+| `internal/files/` | The Files sidebar's filesystem work: folder listing (git-ignored entries hidden), name search, create, rename, delete, text read and conflict-checked write, open and reveal. Paths are resolved inside the project root. `watch.go` is the fsnotify watcher: it watches the root, expanded folders and git metadata, and emits debounced `project:files` batches. `app_files.go` in the root binds these to the frontend. |
 | `internal/terminal/terminal.go` | PTY shells (ConPTY on Windows) started in a project's repo. |
 | `frontend/src/App.tsx` | Root layout, keyboard handling, wiring of panels and dialogs. |
 | `frontend/src/lib/store.ts` | External store with selector subscriptions (`useSyncExternalStore`). Components read slices from here. Events from Go are applied here. |
@@ -30,6 +31,8 @@ Orbit is a Wails v3 desktop app: a Go backend plus a React/TypeScript frontend. 
 | `frontend/src/components/universe/Universe.tsx` | React wrapper that mounts the galaxy canvas. |
 | `frontend/src/components/inspector/` | Agent inspector tabs (overview, chat, activity, files, tools, issues). `Inspector.tsx` is the switch. |
 | `frontend/src/components/navigation/` | Project sidebar. `agentStatus.ts` is pure status grouping. |
+| `frontend/src/components/files/`, `frontend/src/components/git/` | The Files and Git sidebar views, shown inside `ProjectsPanel`. `FileEditor.tsx` is the viewer and editor dialog; `GitView.tsx` is branch, sync, changes, commit and history; `PatchView.tsx` draws inline or split diffs. |
+| `frontend/src/lib/sourceView.ts`, `repoState.ts`, `sourceActions.ts` | Files and Git sidebars. `sourceView.ts` is pure (tree rows, git marks, agent writers, diff parsing). `repoState.ts` coalesces git status reads and subscribes to the watcher. `sourceActions.ts` wraps each file and git action with toasts. |
 | `frontend/src/components/dialogs/Dialogs.tsx` | All modal dialogs, selected by the store's `Dialog` union. |
 | `frontend/src/components/terminal/TerminalPanel.tsx` | xterm.js panel bound to Go terminals. |
 | `frontend/src/components/ui/` | Shared UI primitives and icons. |

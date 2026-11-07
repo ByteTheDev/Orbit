@@ -328,6 +328,8 @@ type LaunchRequest struct {
 	// set, Branch names a new branch to create from HEAD.
 	Branch    string `json:"branch"`
 	NewBranch bool   `json:"newBranch"`
+	// Images are attached to the first message, as in a chat message. Empty when none are pasted.
+	Images []model.ImageUpload `json:"images"`
 }
 
 // Launch creates an agent in a project and, when a task is given, starts its first turn.
@@ -363,6 +365,18 @@ func (m *Manager) launch(req LaunchRequest, sameAs string) (model.AgentSummary, 
 		return model.AgentSummary{}, fmt.Errorf("%q thinking is not available for this model on %s", req.Effort, prov.Name())
 	}
 
+	// Images are stored before anything else can fail. They are removed again unless a turn takes them.
+	images, err := m.saveImages(req.Images)
+	if err != nil {
+		return model.AgentSummary{}, err
+	}
+	turnStarted := false
+	defer func() {
+		if !turnStarted {
+			removeImageFiles(images)
+		}
+	}()
+
 	// Creating a worktree runs git, so it happens before the lock: other agents are not held up by it.
 	m.mu.Lock()
 	proj, ok := m.projects[req.ProjectID]
@@ -374,7 +388,6 @@ func (m *Manager) launch(req LaunchRequest, sameAs string) (model.AgentSummary, 
 		return model.AgentSummary{}, errors.New("the project's repository folder is missing")
 	}
 	var dir, branch string
-	var err error
 	if sameAs != "" {
 		dir, branch, err = m.sharedWorkspace(sameAs, proj.RepoPath)
 	} else {
@@ -428,10 +441,11 @@ func (m *Manager) launch(req LaunchRequest, sameAs string) (model.AgentSummary, 
 	m.markAgentLocked(rec.ID)
 	m.changedLocked()
 
-	if rec.Task != "" {
-		if err := m.startTurnLocked(rec, rec.Task, nil); err != nil {
+	if rec.Task != "" || len(images) > 0 {
+		if err := m.startTurnLocked(rec, rec.Task, images); err != nil {
 			return m.summaryLocked(rec), err
 		}
+		turnStarted = true
 	}
 	return m.summaryLocked(rec), nil
 }
@@ -971,7 +985,8 @@ func autoCommitMessage(agentName, prompt string) string {
 	if what == "" {
 		what = "update files"
 	}
-	return "Orbit: " + agentName + " - " + what
+	// The trailer names the agent for the history view. Only Orbit writes it, so it is reliable.
+	return "Orbit: " + agentName + " - " + what + "\n\n" + gitdiff.AgentTrailer + ": " + firstLine(agentName, 80)
 }
 
 // SetProjectAutoCommit turns auto-commit on or off for a project.
@@ -1028,7 +1043,8 @@ func (m *Manager) applyLocked(rec *model.AgentRecord, r *run, u provider.Update)
 			m.addActivityLocked(rec, "message", "Agent replied: "+firstLine(rec.Messages[idx].Text, 90))
 		}
 	case provider.UpdMessage:
-		m.upsertMessageLocked(rec, model.Message{ID: u.ID, Role: roleOr(u.Role), Text: model.Truncate(u.Text, model.MaxTextBytes), At: now})
+		streaming := roleOr(u.Role) == "assistant"
+		m.upsertMessageLocked(rec, model.Message{ID: u.ID, Role: roleOr(u.Role), Text: model.Truncate(u.Text, model.MaxTextBytes), Streaming: streaming, At: now})
 		if roleOr(u.Role) == "assistant" {
 			r.reply = u.Text
 			m.addActivityLocked(rec, "message", "Agent replied: "+firstLine(u.Text, 90))
@@ -1083,6 +1099,13 @@ func (m *Manager) applyLocked(rec *model.AgentRecord, r *run, u provider.Update)
 			r.reply = u.Text
 			rec.StatusDetail = firstLine(u.Text, 120)
 		}
+		// Clear any streaming markers left by providers that deliver a whole reply at once.
+		for i := range rec.Messages {
+			if rec.Messages[i].Streaming {
+				rec.Messages[i].Streaming = false
+				m.pending = append(m.pending, model.Event{Type: "messageEnd", AgentID: rec.ID, MessageID: rec.Messages[i].ID})
+			}
+		}
 		finishSubAgents(rec, now)
 			m.settleHandoffsLocked(rec.ID, u.Success, now)
 	}
@@ -1102,6 +1125,7 @@ func (m *Manager) finishToolLocked(rec *model.AgentRecord, u provider.Update, no
 		if rec.Tools[i].ID == u.ToolID {
 			rec.Tools[i].Output = output
 			rec.Tools[i].Status = status
+			rec.Tools[i].EndedAt = now
 			t = rec.Tools[i]
 			found = true
 			break
@@ -1109,7 +1133,7 @@ func (m *Manager) finishToolLocked(rec *model.AgentRecord, u provider.Update, no
 	}
 	if !found {
 		// A result arrived without a recorded start; keep it so nothing is lost.
-		t = model.ToolCall{ID: u.ToolID, Name: "Tool", Output: output, Status: status, At: now}
+		t = model.ToolCall{ID: u.ToolID, Name: "Tool", Output: output, Status: status, At: now, EndedAt: now}
 		rec.Tools = appendCapped(rec.Tools, t, model.MaxTools)
 		rec.ToolCalls++
 	}
@@ -1158,13 +1182,23 @@ func (m *Manager) touchFileLocked(rec *model.AgentRecord, t *provider.FileTouch,
 
 // ---- helpers (lock held) --------------------------------------------------
 
+// minorStatusHoldMs is how long a read or search status stays on screen (Grep, Glob, Read, web
+// and browse calls). A newer read or search inside this window is skipped, so a quick Grep stays
+// readable. Edits, shell commands and final states are never held back.
+const minorStatusHoldMs = 4000
+
 func (m *Manager) setStatusLocked(rec *model.AgentRecord, status model.Status, detail string) {
 	if status == "" {
+		return
+	}
+	now := nowMs()
+	if status == model.StatusReading && rec.Status == model.StatusReading && now-rec.StatusSetAt < minorStatusHoldMs {
 		return
 	}
 	changed := rec.Status != status
 	rec.Status = status
 	rec.StatusDetail = detail
+	rec.StatusSetAt = now
 	if changed && (status == model.StatusCompleted || status == model.StatusFailed ||
 		status == model.StatusStopped || status == model.StatusWaiting) {
 		text := detail

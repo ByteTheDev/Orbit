@@ -60,6 +60,7 @@ func (p OMP) Capabilities() model.Capabilities {
 func (p OpenCode) Capabilities() model.Capabilities {
 	c := otherCaps(openCodeModelList())
 	c.PermissionModes = openCodePermissionModes
+	c.Streaming = true
 	return c
 }
 
@@ -113,6 +114,7 @@ func fetchOMPModels() []model.ModelOption {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, d.Path, "models", "--json")
+	configureProcess(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return []model.ModelOption{}
@@ -160,12 +162,15 @@ func fetchOpenCodeModels() []model.ModelOption {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// The catalog carries each model's thinking variants. Older builds without it fall back to the plain list.
-	if raw, err := exec.CommandContext(ctx, d.Path, "api", "model.list").Output(); err == nil {
+	catalogCmd := exec.CommandContext(ctx, d.Path, "api", "model.list")
+	configureProcess(catalogCmd)
+	if raw, err := catalogCmd.Output(); err == nil {
 		if list, ok := parseOpenCodeCatalog(raw); ok {
 			return list
 		}
 	}
 	cmd := exec.CommandContext(ctx, d.Path, "models")
+	configureProcess(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return []model.ModelOption{}
@@ -335,7 +340,52 @@ func (p *ompParser) parse(line []byte) []Update {
 	return nil
 }
 
-type openCodeParser struct{ session string }
+// openCodePart is a text part that has started but not yet finished in the current step.
+type openCodePart struct {
+	id   string
+	sent string // text already streamed for this part
+}
+
+type openCodeParser struct {
+	session string
+	open    []openCodePart
+}
+
+// endOpen closes every text part still open. OpenCode reports a step's text as it grows,
+// so a part only counts as finished when its step ends.
+func (p *openCodeParser) endOpen() []Update {
+	var out []Update
+	for _, part := range p.open {
+		out = append(out, Update{Kind: UpdMessageEnd, ID: part.id})
+	}
+	p.open = nil
+	return out
+}
+
+// text streams a text part: a start with the first text, then a delta for each new suffix.
+// Whether the CLI sends the text once or as it grows, the reply shows up as it arrives.
+func (p *openCodeParser) text(id, text string) []Update {
+	if id == "" {
+		return []Update{{Kind: UpdMessage, ID: "", Role: "assistant", Text: text}}
+	}
+	for i := range p.open {
+		if p.open[i].id != id {
+			continue
+		}
+		part := &p.open[i]
+		if len(text) > len(part.sent) && strings.HasPrefix(text, part.sent) {
+			delta := text[len(part.sent):]
+			part.sent = text
+			return []Update{{Kind: UpdMessageDelta, ID: id, Text: delta}}
+		}
+		return nil
+	}
+	if text == "" {
+		return nil
+	}
+	p.open = append(p.open, openCodePart{id: id, sent: text})
+	return []Update{{Kind: UpdMessageStart, ID: id, Role: "assistant", Text: text}}
+}
 
 func (p *openCodeParser) parse(line []byte) []Update {
 	var e struct {
@@ -365,10 +415,12 @@ func (p *openCodeParser) parse(line []byte) []Update {
 	}
 	switch e.Type {
 	case "text":
-		out = append(out, Update{Kind: UpdMessage, ID: e.Part.ID, Role: "assistant", Text: e.Part.Text})
+		out = append(out, p.text(e.Part.ID, e.Part.Text)...)
 	case "step_finish":
+		out = append(out, p.endOpen()...)
 		out = append(out, Update{Kind: UpdUsage, InTokens: e.Part.Tokens.Input, OutTokens: e.Part.Tokens.Output, CacheTokens: e.Part.Tokens.Cache.Read}, Update{Kind: UpdCost, Cost: e.Part.Cost}, Update{Kind: UpdTurnDone, Success: true})
 	case "error":
+		out = append(out, p.endOpen()...)
 		out = append(out, Update{Kind: UpdTurnDone, Success: false, Text: string(e.Error)})
 	}
 	return out

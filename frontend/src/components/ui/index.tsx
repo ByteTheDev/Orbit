@@ -11,6 +11,7 @@ import {
   useState,
   type ButtonHTMLAttributes,
   type ChangeEvent,
+  type CSSProperties,
   type InputHTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -722,13 +723,25 @@ export function Dialog({
   children,
   footer,
   width = 'max-w-lg',
+  headerActions,
+  bodyClassName = 'px-5 py-4',
+  panelStyle,
+  fullscreen = false,
 }: {
   title: string
-  description?: string
+  description?: ReactNode
   onClose: () => void
   children: ReactNode
   footer?: ReactNode
   width?: string
+  /** Buttons shown before the close button in the header. */
+  headerActions?: ReactNode
+  /** Classes for the scrolling body. Defaults to the standard padding. */
+  bodyClassName?: string
+  /** Inline size for dialogs that let the user resize them. */
+  panelStyle?: CSSProperties
+  /** Fill the window instead of floating over it. */
+  fullscreen?: boolean
 }) {
   const titleId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -772,28 +785,35 @@ export function Dialog({
     }
   }, [])
 
+  const sizing = fullscreen
+    ? 'h-full w-full max-w-none rounded-none border-0'
+    : `max-h-[86vh] w-full ${width} rounded-xl border border-tint/[0.08]`
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+    <div className={`fixed inset-0 z-50 flex items-center justify-center ${fullscreen ? 'p-0' : 'p-6'}`}>
       <div className="dialog-scrim absolute inset-0 animate-fade-in bg-black/40 motion-reduce:animate-none" onClick={onClose} aria-hidden="true" />
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`dialog-panel relative flex max-h-[86vh] w-full ${width} animate-dialog-in flex-col overflow-hidden rounded-xl border border-tint/[0.08] glass-popover shadow-popover motion-reduce:animate-none`}
+        style={panelStyle}
+        className={`dialog-panel relative flex ${sizing} animate-dialog-in flex-col overflow-hidden glass-popover shadow-popover motion-reduce:animate-none`}
       >
         <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-3.5">
           <div className="min-w-0">
             <h2 id={titleId} className="text-title font-semibold tracking-[-0.01em] text-ink">
               {title}
             </h2>
-            {description && <p className="mt-0.5 text-caption leading-relaxed text-muted">{description}</p>}
+            {description && <div className="mt-0.5 text-caption leading-relaxed text-muted">{description}</div>}
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close dialog" className="-mr-1.5 h-7 w-7 shrink-0 rounded-md px-0">
-            <IconX size={14} />
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {headerActions}
+            <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close dialog" className="-mr-1.5 h-7 w-7 shrink-0 rounded-md px-0">
+              <IconX size={14} />
+            </Button>
+          </div>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className={`min-h-0 flex-1 overflow-y-auto ${bodyClassName}`}>{children}</div>
         {footer && <footer className="flex items-center justify-end gap-2 border-t border-line bg-canvas/40 px-5 py-3">{footer}</footer>}
       </div>
     </div>

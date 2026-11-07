@@ -58,3 +58,32 @@ export function saveSidebarPrefs(prefs: SidebarPrefs, storage: KeyValueStore | n
     // Quota or access errors are not worth interrupting the user for.
   }
 }
+
+// Which sidebar view is showing. Stored under its own key, so the width and collapsed prefs above
+// keep their shape.
+
+export const SIDEBAR_VIEWS = ['projects', 'files', 'git'] as const
+export type SidebarView = (typeof SIDEBAR_VIEWS)[number]
+
+const VIEW_KEY = 'orbit.sidebarView'
+
+/** Reads the saved view. Anything unknown gives the projects view. */
+export function loadSidebarView(storage: KeyValueStore | null = defaultStorage()): SidebarView {
+  if (!storage) return 'projects'
+  try {
+    const raw = storage.getItem(VIEW_KEY)
+    return (SIDEBAR_VIEWS as readonly string[]).includes(raw ?? '') ? (raw as SidebarView) : 'projects'
+  } catch {
+    return 'projects'
+  }
+}
+
+/** Saves the view. A failed write is ignored. */
+export function saveSidebarView(view: SidebarView, storage: KeyValueStore | null = defaultStorage()): void {
+  if (!storage) return
+  try {
+    storage.setItem(VIEW_KEY, view)
+  } catch {
+    // The sidebar still works; it just forgets the view on restart.
+  }
+}

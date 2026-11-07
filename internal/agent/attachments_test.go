@@ -11,7 +11,52 @@ import (
 	"testing"
 
 	"orbit/internal/model"
+	"orbit/internal/provider"
 )
+
+func TestLaunchWithImagesAttachesThemToFirstMessage(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	m.SetAttachmentDir(t.TempDir())
+	m.providers["fake"] = fakeProvider{script: []provider.Update{{Kind: provider.UpdTurnDone, Success: true, Text: "ok"}}}
+	proj, err := m.CreateProject("Demo", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No task text: the images alone start the first turn.
+	sum, err := m.Launch(LaunchRequest{ProjectID: proj.ID, Provider: "fake", Images: []model.ImageUpload{pngUpload(t)}})
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	waitIdle(t, m, sum.ID)
+
+	d, err := m.Detail(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Messages) == 0 || len(d.Messages[0].Attachments) != 1 {
+		t.Fatalf("want the first message to carry one image, got %+v", d.Messages)
+	}
+}
+
+func TestLaunchFailureRemovesPastedImages(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	dir := t.TempDir()
+	m.SetAttachmentDir(dir)
+	m.providers["fake"] = fakeProvider{}
+
+	// The project does not exist, so the launch fails after the images were stored.
+	if _, err := m.Launch(LaunchRequest{ProjectID: "missing", Provider: "fake", Task: "x", Images: []model.ImageUpload{pngUpload(t)}}); err == nil {
+		t.Fatal("want an error for an unknown project")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("want no stored images left behind, found %d", len(entries))
+	}
+}
 
 // pngUpload is a valid 1×1 PNG, base64 encoded the way the window sends it.
 func pngUpload(t *testing.T) model.ImageUpload {

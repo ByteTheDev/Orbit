@@ -3,19 +3,35 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as gitdiff$0 from "./internal/gitdiff/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as model$0 from "./internal/model/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as provider$0 from "./internal/provider/models.js";
 
 /**
- * FileDiffResult carries the diff Orbit recorded and, when available, the git diff.
+ * FileDiffResult carries the diff Orbit recorded, the git diff, and the file's state on disk.
  */
 export interface FileDiffResult {
     "path": string;
+
+    /**
+     * relative to the project folder, as the file APIs expect; empty outside it
+     */
+    "rel": string;
     "recorded": string;
     "gitDiff": string;
     "gitNotice": string;
+    "exists": boolean;
+    "size": number;
+
+    /**
+     * unix milliseconds
+     */
+    "modTime": number;
+    "git": gitdiff$0.FileState | null;
 }
 
 /**

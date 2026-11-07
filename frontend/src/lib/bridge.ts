@@ -9,8 +9,15 @@ import type {
   BranchInfo,
   BrowserPage,
   FileDiffResult,
+  FileEvent,
   GitCommit,
+  GitCommitDetail,
+  GitDiscardTarget,
   GitStatus,
+  FileListing,
+  FileMatches,
+  FileText,
+  ProjectFilesChange,
   ImageUpload,
   LaunchRequest,
   OrbitEvent,
@@ -71,10 +78,43 @@ export const api = {
   getAgentDetail: (agentId: string) => call<AgentDetail>((b) => b.GetAgentDetail(agentId)),
   getFileDiff: (agentId: string, path: string) =>
     call<FileDiffResult>((b) => b.GetFileDiff(agentId, path)),
+  getFileTimeline: (agentId: string, path: string) =>
+    call<FileEvent[]>((b) => b.GetFileTimeline(agentId, path)),
+  getFileHistory: (agentId: string, path: string) =>
+    call<GitCommit[]>((b) => b.GetFileHistory(agentId, path)),
+  getCommitFileDiff: (agentId: string, rev: string, path: string) =>
+    call<string>((b) => b.GetCommitFileDiff(agentId, rev, path)),
+  getFileAtCommit: (agentId: string, rev: string, path: string) =>
+    call<string>((b) => b.GetFileAtCommit(agentId, rev, path)),
+  openProjectFile: (agentId: string, path: string) => call<void>((b) => b.OpenProjectFile(agentId, path)),
   getGitStatus: (projectId: string) => call<GitStatus>((b) => b.GetGitStatus(projectId)),
   getGitDiff: (projectId: string, path: string, staged: boolean, untracked: boolean) =>
     call<string>((b) => b.GetGitDiff(projectId, path, staged, untracked)),
   getGitLog: (projectId: string) => call<GitCommit[]>((b) => b.GetGitLog(projectId)),
+  getGitHistory: (projectId: string, skip: number, limit: number) => call<GitCommit[]>((b) => b.GetGitHistory(projectId, skip, limit)),
+  getGitCommit: (projectId: string, hash: string) => call<GitCommitDetail>((b) => b.GetGitCommit(projectId, hash)),
+  getGitCommitDiff: (projectId: string, hash: string, path: string, oldPath: string) =>
+    call<string>((b) => b.GetGitCommitDiff(projectId, hash, path, oldPath)),
+  gitFetch: (projectId: string) => call<string>((b) => b.GitFetch(projectId)),
+  gitPull: (projectId: string) => call<string>((b) => b.GitPull(projectId)),
+  gitPush: (projectId: string) => call<string>((b) => b.GitPush(projectId)),
+  gitSwitchBranch: (projectId: string, name: string) => call<void>((b) => b.GitSwitchBranch(projectId, name)),
+  gitCreateBranch: (projectId: string, name: string) => call<void>((b) => b.GitCreateBranch(projectId, name)),
+  gitDiscardChanges: (projectId: string, targets: GitDiscardTarget[]) =>
+    call<void>((b) => b.GitDiscardChanges(projectId, targets as never)),
+  listProjectDirectory: (projectId: string, rel: string) => call<FileListing>((b) => b.ListProjectDirectory(projectId, rel)),
+  findProjectFiles: (projectId: string, query: string) => call<FileMatches>((b) => b.FindProjectFiles(projectId, query)),
+  createProjectEntry: (projectId: string, dir: string, name: string, isDir: boolean) =>
+    call<string>((b) => b.CreateProjectEntry(projectId, dir, name, isDir)),
+  renameProjectEntry: (projectId: string, rel: string, newName: string) =>
+    call<string>((b) => b.RenameProjectEntry(projectId, rel, newName)),
+  deleteProjectEntries: (projectId: string, rels: string[]) => call<void>((b) => b.DeleteProjectEntries(projectId, rels)),
+  readProjectText: (projectId: string, rel: string) => call<FileText>((b) => b.ReadProjectText(projectId, rel)),
+  writeProjectText: (projectId: string, rel: string, content: string, expectedModTime: number) =>
+    call<number>((b) => b.WriteProjectText(projectId, rel, content, expectedModTime)),
+  openProjectEntry: (projectId: string, rel: string) => call<void>((b) => b.OpenProjectEntry(projectId, rel)),
+  revealProjectEntry: (projectId: string, rel: string) => call<void>((b) => b.RevealProjectEntry(projectId, rel)),
+  watchProjectFiles: (projectId: string, dirs: string[]) => call<void>((b) => b.WatchProjectFiles(projectId, dirs)),
   stageFiles: (projectId: string, paths: string[]) => call<void>((b) => b.StageFiles(projectId, paths)),
   unstageFiles: (projectId: string, paths: string[]) => call<void>((b) => b.UnstageFiles(projectId, paths)),
   commitChanges: (projectId: string, message: string, paths: string[]) =>
@@ -204,4 +244,22 @@ export function errorText(err: unknown): string {
   if (err instanceof Error) return err.message
   if (typeof err === 'string') return err
   return 'Something went wrong.'
+}
+
+/** The event name the backend uses for file and git-metadata changes in the watched project. */
+export const PROJECT_FILES_EVENT = 'project:files'
+
+/** Subscribes to file-change batches for the watched project. Returns an unsubscribe function. */
+export function onProjectFiles(handler: (change: ProjectFilesChange) => void): () => void {
+  if (!inWails()) return () => {}
+  let off: (() => void) | undefined
+  let cancelled = false
+  void load().then(() => {
+    if (cancelled || !runtime) return
+    off = runtime.Events.On(PROJECT_FILES_EVENT, (event) => handler(event.data as ProjectFilesChange)) as unknown as () => void
+  })
+  return () => {
+    cancelled = true
+    off?.()
+  }
 }

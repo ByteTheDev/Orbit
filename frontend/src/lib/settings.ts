@@ -4,6 +4,7 @@
 // Settings are per-machine UI preferences, so they live in localStorage, not the Go state file.
 
 import { normaliseDefaultModels, type DefaultModels } from './defaultModel'
+import { normaliseDefaultPermissions, type DefaultPermissions } from './defaultPermission'
 
 /** A built-in theme id, or the id of an imported theme (those start with `custom-`). */
 export type ThemeId = string
@@ -24,6 +25,8 @@ export interface Settings {
   toastLength: ToastLength
   /** The model a new agent starts with, per provider id. A provider with no entry uses its own default. */
   defaultModels: DefaultModels
+  /** The permission mode (access level) a new agent starts with, per provider id. A provider with no entry uses its first mode. */
+  defaultPermissions: DefaultPermissions
   /** Liquid Glass: translucent, blurred panels. Off makes every surface solid. */
   liquidGlass: boolean
   /** How much of the galaxy shows through the sidebar, as a percentage. 100 is solid. */
@@ -54,6 +57,7 @@ export const DEFAULT_SETTINGS: Settings = {
   singleKeyShortcuts: true,
   toastLength: 'normal',
   defaultModels: {},
+  defaultPermissions: {},
   liquidGlass: true,
   sidebarOpacity: SIDEBAR_OPACITY_RANGE.default,
   glassBlur: 'balanced',
@@ -435,6 +439,7 @@ export function normaliseSettings(raw: unknown, customIds: readonly string[] = [
       typeof r.singleKeyShortcuts === 'boolean' ? r.singleKeyShortcuts : DEFAULT_SETTINGS.singleKeyShortcuts,
     toastLength: pick(r.toastLength, ['short', 'normal', 'long'] as const, DEFAULT_SETTINGS.toastLength),
     defaultModels: normaliseDefaultModels(r.defaultModels),
+    defaultPermissions: normaliseDefaultPermissions(r.defaultPermissions),
     liquidGlass: typeof r.liquidGlass === 'boolean' ? r.liquidGlass : DEFAULT_SETTINGS.liquidGlass,
     sidebarOpacity:
       typeof r.sidebarOpacity === 'number' && Number.isFinite(r.sidebarOpacity)

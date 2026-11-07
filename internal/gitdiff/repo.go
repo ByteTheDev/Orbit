@@ -29,6 +29,14 @@ type RepoStatus struct {
 	Branch     string   `json:"branch"`
 	HasCommits bool     `json:"hasCommits"`
 	Changes    []Change `json:"changes"`
+	// Upstream is the remote branch Branch tracks, empty when there is none.
+	Upstream string `json:"upstream"`
+	Ahead    int    `json:"ahead"`
+	Behind   int    `json:"behind"`
+	// Remote reports whether the repository has any remote configured.
+	Remote bool `json:"remote"`
+	// Conflicts counts paths with unresolved merge conflicts.
+	Conflicts int `json:"conflicts"`
 }
 
 // Change is one path with uncommitted work. A path can be both staged and unstaged.
@@ -42,6 +50,8 @@ type Change struct {
 	// Index and Worktree are git's one-letter codes (M, A, D, R, U, ?, space).
 	Index    string `json:"index"`
 	Worktree string `json:"worktree"`
+	// Conflicted is set for paths git could not merge.
+	Conflicted bool `json:"conflicted"`
 }
 
 // CommitInfo is one entry in the recent history.
@@ -51,20 +61,60 @@ type CommitInfo struct {
 	Subject string `json:"subject"`
 	Author  string `json:"author"`
 	At      int64  `json:"at"` // unix milliseconds
+	// Agent is the agent named by the Orbit-Agent trailer. Empty for commits Orbit did not make.
+	Agent string `json:"agent"`
 }
 
 // Status reads the branch and every changed path. Untracked files are listed one by one.
 func Status(repo string) (RepoStatus, error) {
-	out, err := git(repo, readTimeout, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	out, err := git(repo, readTimeout, "status", "--porcelain=v1", "-z", "-b", "--untracked-files=all")
 	if err != nil {
 		return RepoStatus{}, err
 	}
-	st := RepoStatus{Changes: parseStatus(out), HasCommits: hasHead(repo)}
-	// symbolic-ref fails on a detached HEAD, which leaves the branch empty.
-	if branch, err := git(repo, readTimeout, "symbolic-ref", "--short", "-q", "HEAD"); err == nil {
-		st.Branch = strings.TrimSpace(branch)
+	// With -b the first record is the branch header, "## branch...upstream [ahead 1, behind 2]".
+	header := ""
+	if strings.HasPrefix(out, "## ") {
+		header, out, _ = strings.Cut(out, "\x00")
+	}
+	st := RepoStatus{Changes: parseStatus(out), HasCommits: hasHead(repo), Remote: HasRemote(repo)}
+	st.Branch, st.Upstream, st.Ahead, st.Behind = parseBranchHeader(strings.TrimPrefix(header, "## "))
+	for i := range st.Changes {
+		st.Changes[i].Conflicted = isConflicted(st.Changes[i].Index, st.Changes[i].Worktree)
+		if st.Changes[i].Conflicted {
+			st.Conflicts++
+		}
 	}
 	return st, nil
+}
+
+// parseBranchHeader reads the text after "## " in porcelain status. Forms: "main", "main...origin/main
+// [ahead 1, behind 2]", "No commits yet on main", and "HEAD (no branch)" for a detached HEAD.
+func parseBranchHeader(h string) (branch, upstream string, ahead, behind int) {
+	switch {
+	case strings.HasPrefix(h, "HEAD (no branch)"), h == "":
+		return "", "", 0, 0
+	case strings.HasPrefix(h, "No commits yet on "):
+		return strings.TrimPrefix(h, "No commits yet on "), "", 0, 0
+	}
+	names, counts, _ := strings.Cut(h, " [")
+	local, up, hasUp := strings.Cut(names, "...")
+	if hasUp {
+		upstream = up
+	}
+	if counts != "" {
+		for _, part := range strings.Split(strings.TrimSuffix(counts, "]"), ",") {
+			var n int
+			switch {
+			case strings.HasPrefix(strings.TrimSpace(part), "ahead "):
+				n, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(part), "ahead ")))
+				ahead = n
+			case strings.HasPrefix(strings.TrimSpace(part), "behind "):
+				n, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(part), "behind ")))
+				behind = n
+			}
+		}
+	}
+	return local, upstream, ahead, behind
 }
 
 // parseStatus reads `git status --porcelain=v1 -z`. Each entry is "XY path"; renames and
@@ -120,33 +170,7 @@ func Diff(repo, path string, staged, untracked bool) (string, error) {
 // Log returns up to limit recent commits on the current HEAD. A repository with no
 // commits yields an empty list.
 func Log(repo string, limit int) ([]CommitInfo, error) {
-	commits := []CommitInfo{}
-	if !hasHead(repo) {
-		return commits, nil
-	}
-	if limit < 1 {
-		limit = 1
-	}
-	out, err := git(repo, readTimeout, "log", "-n", strconv.Itoa(limit), "--no-color",
-		"--pretty=format:%H%x1f%h%x1f%an%x1f%at%x1f%s%x1e")
-	if err != nil {
-		return nil, err
-	}
-	for _, rec := range strings.Split(out, "\x1e") {
-		rec = strings.Trim(rec, "\r\n")
-		if rec == "" {
-			continue
-		}
-		parts := strings.SplitN(rec, "\x1f", 5)
-		if len(parts) != 5 {
-			continue
-		}
-		at, _ := strconv.ParseInt(parts[3], 10, 64)
-		commits = append(commits, CommitInfo{
-			Hash: parts[0], Short: parts[1], Author: parts[2], At: at * 1000, Subject: parts[4],
-		})
-	}
-	return commits, nil
+	return LogPage(repo, 0, limit)
 }
 
 // Stage adds the given paths to the index. Deleted files are staged as deletions.

@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/aymanbagabas/go-pty v0.2.3
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/wailsapp/go-webview2 v1.0.22
 	github.com/wailsapp/wails/v3 v3.0.0
 	golang.org/x/crypto v0.57.0

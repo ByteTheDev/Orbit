@@ -45,6 +45,20 @@ export function elapsed(fromMs: number, now = Date.now()): string {
   return `${sec}s`
 }
 
+/**
+ * How long a finished step took. Sub-second runs read as milliseconds and short runs keep one
+ * decimal, so a row's duration stays compact and precise where it matters.
+ */
+export function duration(ms: number): string {
+  if (!(ms > 0)) return ''
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`
+  const s = Math.floor(ms / 1000)
+  const m = Math.floor(s / 60)
+  if (m === 0) return `${s}s`
+  return `${m}m ${(s % 60).toString().padStart(2, '0')}s`
+}
+
 export function tokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`

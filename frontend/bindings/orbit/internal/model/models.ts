@@ -313,6 +313,27 @@ export interface FileActivity {
 }
 
 /**
+ * FileEvent is one recorded read or write of a file by an agent in the same project.
+ * Events come from the agents' own tool calls, so a provider that does not report file
+ * tools leaves its agents out of the timeline.
+ */
+export interface FileEvent {
+    "agentId": string;
+    "agentName": string;
+
+    /**
+     * read | write
+     */
+    "op": string;
+    "tool": string;
+
+    /**
+     * unix milliseconds
+     */
+    "at": number;
+}
+
+/**
  * FileOpRecord is one recorded read or write of a file.
  */
 export interface FileOpRecord {
@@ -607,6 +628,11 @@ export interface ToolCall {
      */
     "status": string;
     "at": number;
+
+    /**
+     * EndedAt is when the result arrived. Zero while running, so the UI shows real duration only.
+     */
+    "endedAt"?: number;
 }
 
 /**

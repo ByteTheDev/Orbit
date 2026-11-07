@@ -18,6 +18,9 @@ import * as agent$0 from "./internal/agent/models.js";
 import * as browser$0 from "./internal/browser/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as files$0 from "./internal/files/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as gitdiff$0 from "./internal/gitdiff/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -174,6 +177,13 @@ export function CreateProject(name: string, repoPath: string): $CancellablePromi
 }
 
 /**
+ * CreateProjectEntry makes a file or folder inside dir and returns its path.
+ */
+export function CreateProjectEntry(projectID: string, dir: string, name: string, isDir: boolean): $CancellablePromise<string> {
+    return $Call.ByID(4067036230, projectID, dir, name, isDir);
+}
+
+/**
  * DelegateTask asks agent toID to carry out task on behalf of fromID. The galaxy draws the handoff as a beam.
  */
 export function DelegateTask(fromID: string, toID: string, task: string): $CancellablePromise<model$0.Handoff> {
@@ -195,10 +205,24 @@ export function DeleteProject(projectID: string): $CancellablePromise<void> {
 }
 
 /**
+ * DeleteProjectEntries deletes files and folders. The caller has already confirmed with the user.
+ */
+export function DeleteProjectEntries(projectID: string, rels: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(3086633713, projectID, rels);
+}
+
+/**
  * DeleteSSHProfile removes a saved SSH connection.
  */
 export function DeleteSSHProfile(id: string): $CancellablePromise<void> {
     return $Call.ByID(213402669, id);
+}
+
+/**
+ * FindProjectFiles searches the project's file names. Git's ignore rules apply.
+ */
+export function FindProjectFiles(projectID: string, query: string): $CancellablePromise<files$0.Matches> {
+    return $Call.ByID(1655952490, projectID, query);
 }
 
 /**
@@ -209,6 +233,20 @@ export function GetAgentDetail(agentID: string): $CancellablePromise<model$0.Age
 }
 
 /**
+ * GetCommitFileDiff returns the change one commit made to a file.
+ */
+export function GetCommitFileDiff(agentID: string, rev: string, path: string): $CancellablePromise<string> {
+    return $Call.ByID(2192119431, agentID, rev, path);
+}
+
+/**
+ * GetFileAtCommit returns a file's content as it was in one commit.
+ */
+export function GetFileAtCommit(agentID: string, rev: string, path: string): $CancellablePromise<string> {
+    return $Call.ByID(2739713513, agentID, rev, path);
+}
+
+/**
  * GetFileDiff returns the diff for one file touched by an agent.
  */
 export function GetFileDiff(agentID: string, path: string): $CancellablePromise<$models.FileDiffResult> {
@@ -216,10 +254,45 @@ export function GetFileDiff(agentID: string, path: string): $CancellablePromise<
 }
 
 /**
+ * GetFileHistory lists the commits that changed a file, newest first.
+ */
+export function GetFileHistory(agentID: string, path: string): $CancellablePromise<gitdiff$0.CommitInfo[] | null> {
+    return $Call.ByID(3742548899, agentID, path);
+}
+
+/**
+ * GetFileTimeline lists every recorded read and write of a file by the agents in its project.
+ */
+export function GetFileTimeline(agentID: string, path: string): $CancellablePromise<model$0.FileEvent[] | null> {
+    return $Call.ByID(1766907682, agentID, path);
+}
+
+/**
+ * GetGitCommit returns one commit with the files it changed.
+ */
+export function GetGitCommit(projectID: string, hash: string): $CancellablePromise<gitdiff$0.CommitDetail> {
+    return $Call.ByID(126254284, projectID, hash);
+}
+
+/**
+ * GetGitCommitDiff returns the patch for one file in one commit.
+ */
+export function GetGitCommitDiff(projectID: string, hash: string, path: string, oldPath: string): $CancellablePromise<string> {
+    return $Call.ByID(1128195003, projectID, hash, path, oldPath);
+}
+
+/**
  * GetGitDiff returns the diff for one changed path. staged picks the index side.
  */
 export function GetGitDiff(projectID: string, path: string, staged: boolean, untracked: boolean): $CancellablePromise<string> {
     return $Call.ByID(2688063178, projectID, path, staged, untracked);
+}
+
+/**
+ * GetGitHistory returns a page of commits, skip commits back from HEAD.
+ */
+export function GetGitHistory(projectID: string, skip: number, limit: number): $CancellablePromise<gitdiff$0.CommitInfo[] | null> {
+    return $Call.ByID(1604680175, projectID, skip, limit);
 }
 
 /**
@@ -259,6 +332,48 @@ export function GetSnapshot(): $CancellablePromise<$models.Snapshot> {
 }
 
 /**
+ * GitCreateBranch makes a branch from HEAD and switches to it.
+ */
+export function GitCreateBranch(projectID: string, name: string): $CancellablePromise<void> {
+    return $Call.ByID(2582897723, projectID, name);
+}
+
+/**
+ * GitDiscardChanges throws away the given uncommitted changes. The caller has already confirmed.
+ */
+export function GitDiscardChanges(projectID: string, targets: gitdiff$0.DiscardTarget[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2051944856, projectID, targets);
+}
+
+/**
+ * GitFetch downloads the remote's changes without touching the working tree.
+ */
+export function GitFetch(projectID: string): $CancellablePromise<string> {
+    return $Call.ByID(3453556797, projectID);
+}
+
+/**
+ * GitPull brings the current branch up to date with its upstream.
+ */
+export function GitPull(projectID: string): $CancellablePromise<string> {
+    return $Call.ByID(3933172764, projectID);
+}
+
+/**
+ * GitPush sends the current branch to its remote.
+ */
+export function GitPush(projectID: string): $CancellablePromise<string> {
+    return $Call.ByID(4036251239, projectID);
+}
+
+/**
+ * GitSwitchBranch checks out an existing branch.
+ */
+export function GitSwitchBranch(projectID: string, name: string): $CancellablePromise<void> {
+    return $Call.ByID(3494479771, projectID, name);
+}
+
+/**
  * LaunchAgent creates an agent and optionally starts its first task.
  */
 export function LaunchAgent(req: agent$0.LaunchRequest): $CancellablePromise<model$0.AgentSummary> {
@@ -280,6 +395,13 @@ export function LaunchTeam(first: agent$0.LaunchRequest, partners: agent$0.Launc
 }
 
 /**
+ * ListProjectDirectory returns the visible entries of one folder of a project. rel "" is the root.
+ */
+export function ListProjectDirectory(projectID: string, rel: string): $CancellablePromise<files$0.Listing> {
+    return $Call.ByID(2743169409, projectID, rel);
+}
+
+/**
  * ListProjectFiles lists the entries in one directory of a project's repository.
  * Used by the chat @-mention autocomplete.
  */
@@ -292,6 +414,20 @@ export function ListProjectFiles(projectID: string, relPath: string): $Cancellab
  */
 export function ListSSHProfiles(): $CancellablePromise<model$0.SSHProfile[] | null> {
     return $Call.ByID(314764623);
+}
+
+/**
+ * OpenProjectEntry opens a file or folder in the system's default application.
+ */
+export function OpenProjectEntry(projectID: string, rel: string): $CancellablePromise<void> {
+    return $Call.ByID(2392615954, projectID, rel);
+}
+
+/**
+ * OpenProjectFile opens a file of the agent's project in the system's default application.
+ */
+export function OpenProjectFile(agentID: string, path: string): $CancellablePromise<void> {
+    return $Call.ByID(3695221724, agentID, path);
 }
 
 /**
@@ -317,6 +453,13 @@ export function ProjectBranches(projectID: string): $CancellablePromise<model$0.
 }
 
 /**
+ * ReadProjectText loads a file for the editor.
+ */
+export function ReadProjectText(projectID: string, rel: string): $CancellablePromise<files$0.Text> {
+    return $Call.ByID(2754047461, projectID, rel);
+}
+
+/**
  * Relay hands a message from one agent to another and asks the receiver to act on it.
  */
 export function Relay(fromID: string, toID: string, message: string): $CancellablePromise<model$0.Handoff> {
@@ -338,6 +481,13 @@ export function RenameAgent(agentID: string, name: string): $CancellablePromise<
 }
 
 /**
+ * RenameProjectEntry renames a file or folder and returns its new path.
+ */
+export function RenameProjectEntry(projectID: string, rel: string, newName: string): $CancellablePromise<string> {
+    return $Call.ByID(121090124, projectID, rel, newName);
+}
+
+/**
  * ResizeTerminal tells a terminal its size in cells.
  */
 export function ResizeTerminal(terminalID: string, cols: number, rows: number): $CancellablePromise<void> {
@@ -349,6 +499,13 @@ export function ResizeTerminal(terminalID: string, cols: number, rows: number): 
  */
 export function ResumeAgent(agentID: string): $CancellablePromise<void> {
     return $Call.ByID(2505704535, agentID);
+}
+
+/**
+ * RevealProjectEntry selects a file or folder in the system file manager.
+ */
+export function RevealProjectEntry(projectID: string, rel: string): $CancellablePromise<void> {
+    return $Call.ByID(610992635, projectID, rel);
 }
 
 /**
@@ -483,6 +640,22 @@ export function TestSSHProfile(id: string): $CancellablePromise<void> {
  */
 export function UnstageFiles(projectID: string, paths: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(3316089819, projectID, paths);
+}
+
+/**
+ * WatchProjectFiles sets what the watcher reports: the project root, the folders the sidebar has
+ * open, and the project's git metadata. Passing an empty project id stops all watching.
+ */
+export function WatchProjectFiles(projectID: string, dirs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(1293812768, projectID, dirs);
+}
+
+/**
+ * WriteProjectText saves an edited file. It refuses when the file changed since expectedModTime.
+ * It returns the file's new modification time.
+ */
+export function WriteProjectText(projectID: string, rel: string, content: string, expectedModTime: number): $CancellablePromise<number> {
+    return $Call.ByID(2223294858, projectID, rel, content, expectedModTime);
 }
 
 /**

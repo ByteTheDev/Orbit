@@ -1,18 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { parseDiff, type DiffKind } from '../../lib/diff'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { addImages, toUploads, type PendingImage } from '../../lib/chatImages'
 import { api, errorText } from '../../lib/bridge'
 import { createProject, deleteProject, launchAgent, removeAgent, setProjectIcon, uploadProjectIcon } from '../../lib/actions'
 import { closeDialog, openDialog, useStore, type Dialog as DialogState } from '../../lib/store'
 import { SettingsDialog } from '../settings/SettingsDialog'
 import { BrowserDialog } from '../browser/BrowserDialog'
+// The file inspector pulls in the syntax highlighter, so it loads when a file is first opened.
+const FileInspector = lazy(() => import('./FileInspector').then((m) => ({ default: m.FileInspector })))
 import { AutomationsDialog } from '../automations/AutomationsDialog'
-import { baseName, projectMark, timeAgo } from '../../lib/format'
+import { baseName, projectMark } from '../../lib/format'
 import { identityFor } from '../../lib/projectIdentity'
 import { STATUS_COLOR } from '../../lib/theme'
-import type { BranchInfo, FileDiffResult } from '../../types'
+import type { BranchInfo } from '../../types'
 import { IconBranch } from '../inspector/inspectorIcons'
 import { defaultModelFor } from '../../lib/defaultModel'
-import { Button, Dialog, Field, IconAlert, IconCheck, IconEye, IconFolder, IconPencil, IconPlay, IconPlus, IconShield, IconText, IconUnlock, Input, ProviderMark, Select, Spinner, Textarea } from '../ui'
+import { defaultPermissionFor } from '../../lib/defaultPermission'
+import { Button, Dialog, Field, IconAlert, IconCheck, IconEye, IconFolder, IconPencil, IconPlay, IconPlus, IconShield, IconText, IconUnlock, IconX, Input, ProviderMark, Select, Textarea } from '../ui'
 import { SpeedPicker, speedOf, speedOptionsFor } from '../ui/SpeedPicker'
 import { ModelFields } from './TeamFields'
 
@@ -47,7 +50,11 @@ function renderDialog(dialog: NonNullable<DialogState>, close: () => void): Reac
     case 'launch':
       return <LaunchDialog presetProjectId={dialog.projectId} onClose={close} />
     case 'file':
-      return <FileDialog agentId={dialog.agentId} path={dialog.path} onClose={close} />
+      return (
+        <Suspense fallback={null}>
+          <FileInspector agentId={dialog.agentId} path={dialog.path} onClose={close} />
+        </Suspense>
+      )
     case 'settings':
       return <SettingsDialog section={dialog.section} onClose={close} />
     case 'remove':
@@ -159,16 +166,21 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
   const providers = useStore((s) => s.providers)
   const activeProjectId = useStore((s) => s.activeProjectId)
   const defaultModels = useStore((s) => s.settings.defaultModels)
+  const defaultPermissions = useStore((s) => s.settings.defaultPermissions)
 
   const firstAvailable = providers.find((p) => p.available)?.id ?? providers[0]?.id ?? ''
   const [projectId, setProjectId] = useState(presetProjectId ?? activeProjectId ?? projectOrder[0] ?? '')
   const [providerId, setProviderId] = useState(firstAvailable)
   const provider = providers.find((p) => p.id === providerId)
   const modes = provider?.capabilities.permissionModes ?? []
-  const [mode, setMode] = useState(modes[0]?.id ?? '')
+  const [mode, setMode] = useState(defaultPermissionFor(defaultPermissions, providerId, modes) || (modes[0]?.id ?? ''))
   const [name, setName] = useState('')
   const [model, setModel] = useState('')
   const [task, setTask] = useState('')
+  // Images pasted into the task box. They go with the first message. The ref lets a quick second paste see the first.
+  const [images, setImages] = useState<PendingImage[]>([])
+  const imagesRef = useRef<PendingImage[]>([])
+  const [imageNote, setImageNote] = useState('')
   const [fast, setFast] = useState(false)
   const [ultra, setUltra] = useState(false)
   const [effort, setEffort] = useState('')
@@ -216,7 +228,8 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
   const effortOn = effortLevels.includes(effort) ? effort : ''
 
   useEffect(() => {
-    setMode(modes[0]?.id ?? '')
+    // The saved permission default for this provider, if it still offers it; otherwise its first mode.
+    setMode(defaultPermissionFor(defaultPermissions, providerId, modes) || (modes[0]?.id ?? ''))
     // A model from one provider means nothing to another, so the choice follows the provider: its saved default, if it still offers it.
     setModel(defaultModelFor(defaultModels, providerId, models))
     setFast(false)
@@ -260,6 +273,7 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
       model: model.trim(),
       permissionMode: mode,
       task: task.trim(),
+      images: toUploads(images),
       fastMode: fastOn || ultraOn,
       ultraFast: ultraOn,
       effort: effortOn,
@@ -300,6 +314,22 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
       e.preventDefault()
       void submit()
     }
+  }
+
+  const setImagesFor = (next: PendingImage[]) => {
+    imagesRef.current = next
+    setImages(next)
+  }
+
+  // Pasting an image attaches it to the first message. Text pastes behave as usual.
+  const onTaskPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'))
+    if (files.length === 0) return
+    e.preventDefault()
+    void addImages(files, imagesRef.current.length).then(({ added, problems }) => {
+      if (added.length) setImagesFor([...imagesRef.current, ...added])
+      setImageNote(problems.join(' '))
+    })
   }
 
   return (
@@ -491,140 +521,40 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
               value={task}
               onChange={(e) => setTask(e.target.value)}
               onKeyDown={onTaskKey}
+              onPaste={onTaskPaste}
               rows={3}
               title={taskNote}
               placeholder="Add a loading state to the settings page and write a test for it."
             />
+            {images.length > 0 && (
+              <ul aria-label="Attached images" className="flex flex-wrap gap-2 pt-2">
+                {images.map((img) => (
+                  <li key={img.id} className="relative">
+                    <img src={img.preview} alt={img.name} title={img.name} className="h-12 w-12 rounded-md border border-tint/[0.08] object-cover" />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Remove ${img.name}`}
+                      title="Remove"
+                      onClick={() => setImagesFor(imagesRef.current.filter((i) => i.id !== img.id))}
+                      className="absolute -right-1.5 -top-1.5 h-5 w-5 rounded-full border border-tint/[0.08] bg-canvas px-0"
+                    >
+                      <IconX size={9} />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {imageNote && (
+              <p role="alert" className="pt-1 text-label text-danger-soft">
+                {imageNote}
+              </p>
+            )}
           </Field>
 
         </div>
       )}
     </Dialog>
-  )
-}
-
-// ---- file ----------------------------------------------------------------------------
-
-function FileDialog({ agentId, path, onClose }: { agentId: string; path: string; onClose: () => void }) {
-  const detail = useStore((s) => s.details[agentId])
-  const agent = useStore((s) => s.agents[agentId])
-  const file = detail?.files[path]
-  const [result, setResult] = useState<FileDiffResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    api
-      .getFileDiff(agentId, path)
-      .then((r) => !cancelled && setResult(r))
-      .catch((e) => !cancelled && setError(errorText(e)))
-    return () => {
-      cancelled = true
-    }
-  }, [agentId, path])
-
-  const diff = result?.recorded || ''
-  return (
-    <Dialog title={baseName(path)} description={path} onClose={onClose} width="max-w-3xl">
-      <div className="space-y-6">
-        <div className="grid grid-cols-3 gap-2 text-caption">
-          <Info label="Last operation" value={file ? `${file.lastOp || '—'} · ${file.state}` : '—'} />
-          <Info label="Writes / reads" value={file ? `${file.writes} / ${file.reads}` : '—'} />
-          <Info label="Last touched" value={file ? timeAgo(file.lastAt) : '—'} />
-        </div>
-
-        <section>
-          <SectionLabel>Operations</SectionLabel>
-          {file?.ops && file.ops.length > 0 ? (
-            <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface/60">
-              {[...file.ops].reverse().map((op, i) => (
-                <li key={`${op.at}-${i}`} className="flex items-center gap-3 px-3 py-2 text-caption">
-                  <span className="flex w-14 items-center gap-1.5 font-medium" style={{ color: op.op === 'write' ? STATUS_COLOR.writing : STATUS_COLOR.reading }}>
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: op.op === 'write' ? STATUS_COLOR.writing : STATUS_COLOR.reading }} />
-                    {op.op === 'write' ? 'Write' : 'Read'}
-                  </span>
-                  <span className="font-mono text-label text-muted">{op.tool}</span>
-                  <span className="ml-auto text-faint">{timeAgo(op.at)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-caption text-faint">No recorded operations.</p>
-          )}
-        </section>
-
-        <section>
-          <SectionLabel>Diff</SectionLabel>
-          {!result && !error && <Spinner label="Loading diff…" />}
-          {error && <p className="text-caption text-danger-soft">{error}</p>}
-          {result && (
-            <>
-              {diff ? (
-                <DiffView text={diff} />
-              ) : (
-                <p className="text-caption text-faint">{agent?.provider === 'codex' ? 'Codex does not send diffs. ' : ''}No diff was recorded for this file.</p>
-              )}
-              {result.gitDiff && (
-                <div className="mt-5">
-                  <p className="mb-2 text-caption text-muted">Working tree against HEAD (git)</p>
-                  <DiffView text={result.gitDiff} />
-                </div>
-              )}
-              {result.gitNotice && !result.gitDiff && <p className="mt-3 text-label text-faint">{result.gitNotice}</p>}
-            </>
-          )}
-        </section>
-      </div>
-    </Dialog>
-  )
-}
-
-function Info({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-line bg-surface/60 px-3 py-2">
-      <div className="text-label text-muted">{label}</div>
-      <div className="mt-0.5 truncate font-medium text-ink">{value}</div>
-    </div>
-  )
-}
-
-const DIFF_TONE: Record<DiffKind, string> = {
-  add: 'bg-ok/[0.07] text-ok',
-  del: 'bg-danger/[0.07] text-danger-soft',
-  ctx: 'text-ink/70',
-  hunk: 'bg-tint/[0.03] text-muted',
-  meta: 'text-faint',
-}
-const DIFF_SIGN: Record<DiffKind, string> = { add: '+', del: '−', ctx: ' ', hunk: ' ', meta: ' ' }
-
-/** Unified diff with old and new line numbers, a change count, and per-line tinting. */
-export function DiffView({ text }: { text: string }) {
-  const { rows, additions, deletions } = useMemo(() => parseDiff(text), [text])
-  return (
-    <div>
-      <p className="mb-2 flex items-center gap-3 font-mono text-label tabular-nums">
-        <span className="text-ok">+{additions}</span>
-        <span className="text-danger-soft">−{deletions}</span>
-      </p>
-      <div className="max-h-96 overflow-auto rounded-lg border border-line bg-canvas font-mono text-caption leading-[1.65]">
-        <div className="min-w-max py-1.5">
-          {rows.map((r, i) => (
-            <div key={i} className={`flex whitespace-pre ${DIFF_TONE[r.kind]}`}>
-              <span className="w-11 shrink-0 select-none pr-2 text-right text-faint/70" aria-hidden="true">
-                {r.oldNo ?? ''}
-              </span>
-              <span className="w-11 shrink-0 select-none pr-2 text-right text-faint/70" aria-hidden="true">
-                {r.newNo ?? ''}
-              </span>
-              <span className="w-4 shrink-0 select-none text-faint" aria-hidden="true">
-                {DIFF_SIGN[r.kind]}
-              </span>
-              <span className="pr-4">{r.text || ' '}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
   )
 }
 

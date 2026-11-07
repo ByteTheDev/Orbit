@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { useStore, openDialog, setSidebar, setState, toast } from '../lib/store'
+import { useStore, openDialog, setSidebar, setSidebarView, setState, toast } from '../lib/store'
 import { errorText } from '../lib/bridge'
-import { SIDEBAR_RAIL } from '../lib/sidebarPrefs'
+import { SIDEBAR_RAIL, SIDEBAR_VIEWS, type SidebarView } from '../lib/sidebarPrefs'
+import { useWatchProject } from '../lib/repoState'
 import { isResolved, markResolved } from '../lib/conflictResolution'
 import type { AgentSummary } from '../types'
 import { ContextMenu, type MenuItem } from './ContextMenu'
@@ -15,6 +16,15 @@ import { Tooltip } from './navigation/Tooltip'
 import { buildNavProjects, groupAgents, isFiltering, providersIn, type NavFilter } from './navigation/projectFilter'
 import { Button, IconAlert, IconPencil, IconPlus, IconTrash, IconFolder, IconSidebar } from './ui'
 import { FileIcon } from './ui/FileIcon'
+import { OutlinedIcon } from './ui/OutlinedIcon'
+import { FilesView } from './files/FilesView'
+import { GitView } from './git/GitView'
+
+const VIEW_META: Record<SidebarView, { title: string; icon: string; label: string }> = {
+  projects: { title: 'Projects', icon: 'dashboard', label: 'Projects' },
+  files: { title: 'Files', icon: 'folder', label: 'Files' },
+  git: { title: 'Source control', icon: 'call_split', label: 'Git' },
+}
 
 interface Props {
   onFocusProject: (projectId: string) => void
@@ -47,6 +57,10 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
   const loading = useStore((s) => s.loading)
   const sidebarWidth = useStore((s) => s.sidebarWidth)
   const collapsed = useStore((s) => s.sidebarCollapsed)
+  const view = useStore((s) => s.sidebarView)
+  const expandedDirs = useStore((s) => (activeId ? s.explorerExpanded[activeId] : undefined))
+  // The watcher always covers the active project's root and git metadata; the Files view adds its open folders.
+  useWatchProject(activeId, view === 'files' ? expandedDirs ?? [] : [])
 
   const [query, setQuery] = useState('')
   const [provider, setProvider] = useState<string | null>(null)
@@ -139,8 +153,9 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
         <>
           <header className="flex items-center justify-between gap-2 px-3 pb-2 pt-3">
             <div className="flex min-w-0 items-baseline gap-2">
-              <h2 className="text-label font-semibold uppercase tracking-[0.12em] text-muted">Projects</h2>
-              {projectOrder.length > 0 && (
+              <h2 className="text-label font-semibold uppercase tracking-[0.12em] text-muted">{VIEW_META[view].title}</h2>
+              {view !== 'projects' && activeProject && <span className="min-w-0 truncate text-label text-faint">{activeProject.name}</span>}
+              {view === 'projects' && projectOrder.length > 0 && (
                 <span className="text-label font-medium tabular-nums text-faint" aria-label={`${countLabel} projects shown`}>
                   {loading && projectOrder.length === 0 ? '…' : countLabel}
                 </span>
@@ -156,16 +171,38 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
               >
                 <IconSidebar size={13} />
               </button>
+              {view === 'projects' && (
               <Tooltip label="New project" shortcut="P" align="end">
                 <Button variant="ghost" size="sm" onClick={() => openDialog({ kind: 'project' })} aria-label="New project" className="-mr-1.5 h-7 gap-1 rounded-md px-2 text-caption text-muted hover:text-ink">
                   <IconPlus size={11} />
                   New
                 </Button>
               </Tooltip>
+              )}
             </div>
           </header>
 
-          {projectOrder.length > 0 && (
+          <div role="tablist" aria-label="Sidebar view" className="mx-3 mb-2 flex items-center gap-0.5 rounded-lg bg-tint/[0.035] p-0.5">
+            {SIDEBAR_VIEWS.map((v) => (
+              <Tooltip key={v} label={VIEW_META[v].label} align="start">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={view === v}
+                  aria-label={VIEW_META[v].label}
+                  onClick={() => setSidebarView(v)}
+                  className={`flex h-7 flex-1 items-center justify-center gap-1.5 rounded-md text-caption transition-[background-color,color] duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-tint/[0.2] ${
+                    view === v ? 'bg-tint/[0.09] text-ink shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]' : 'text-faint hover:text-muted'
+                  }`}
+                >
+                  <OutlinedIcon name={VIEW_META[v].icon} size={14} />
+                  <span className="hidden min-[300px]:inline">{VIEW_META[v].label}</span>
+                </button>
+              </Tooltip>
+            ))}
+          </div>
+
+          {view === 'projects' && projectOrder.length > 0 && (
             <SidebarFilters
               query={query}
               onQuery={setQuery}
@@ -180,9 +217,11 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
             />
           )}
 
-          {!filtering && projectOrder.length > 0 && <ActiveAgents agents={agentList} projects={projects} selectedId={selectedId} onFocusAgent={onFocusAgent} />}
+          {view === 'projects' && !filtering && projectOrder.length > 0 && <ActiveAgents agents={agentList} projects={projects} selectedId={selectedId} onFocusAgent={onFocusAgent} />}
 
-          <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-2" aria-label="Project list" aria-busy={loading && projectOrder.length === 0} onKeyDown={onNavKey}>
+          {view === 'files' && (activeId ? <FilesView key={activeId} projectId={activeId} /> : <NoProject text="Choose a project to see its files." />)}
+          {view === 'git' && (activeId ? <GitView key={activeId} projectId={activeId} /> : <NoProject text="Choose a project to see its source control." />)}
+          {view === 'projects' && <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-2" aria-label="Project list" aria-busy={loading && projectOrder.length === 0} onKeyDown={onNavKey}>
             {loading && projectOrder.length === 0 && <SkeletonRows />}
 
             {!loading && projectOrder.length === 0 && (
@@ -230,7 +269,7 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
             {!filtering && activeProject && activeProject.conflicts.length > 0 && (
               <ConflictList projectId={activeProject.id} conflicts={activeProject.conflicts} />
             )}
-          </nav>
+          </nav>}
 
           <ResizeHandle
             width={sidebarWidth}
@@ -247,6 +286,10 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
       )}
     </aside>
   )
+}
+
+function NoProject({ text }: { text: string }) {
+  return <p className="px-5 py-10 text-center text-caption text-muted">{text}</p>
 }
 
 async function copyPath(path: string): Promise<void> {

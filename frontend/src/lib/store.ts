@@ -1,7 +1,7 @@
 // A small external store. Components subscribe to slices with selectors, so a
 // batch of agent events re-renders only the parts of the UI that changed.
 import { useSyncExternalStore } from 'react'
-import { clampSidebarWidth, loadSidebarPrefs, saveSidebarPrefs } from './sidebarPrefs'
+import { clampSidebarWidth, loadSidebarPrefs, loadSidebarView, saveSidebarPrefs, saveSidebarView, type SidebarView } from './sidebarPrefs'
 import {
   MAX_CUSTOM_THEMES,
   TOAST_MS,
@@ -20,6 +20,7 @@ import type {
   AgentSummary,
   Automation,
   FileActivity,
+  GitStatus,
   Issue,
   Message,
   OrbitEvent,
@@ -90,6 +91,16 @@ export interface State {
   sidebarWidth: number
   /** Narrow rail of project marks instead of the full navigator. Persisted by setSidebar. */
   sidebarCollapsed: boolean
+  /** Which view the sidebar shows: projects, files or git. Persisted by setSidebarView. */
+  sidebarView: SidebarView
+  /** Files attached from the Files sidebar that the agent's chat has not taken yet, as project paths. */
+  pendingMentions: Record<string, string[]>
+  /** The file open in the editor dialog, or null. */
+  fileEditor: { projectId: string; path: string } | null
+  /** Folders the Files sidebar has expanded, per project, as root-relative paths. */
+  explorerExpanded: Record<string, string[]>
+  /** The last git status read for each project. Shared by the Files and Git views. */
+  repoStatus: Record<string, GitStatus>
   /** Full-width dashboard of every agent across every project. */
   dashboardOpen: boolean
   activeProjectId: string | null
@@ -135,6 +146,11 @@ const initial: State = {
   projectsOpen: true,
   sidebarWidth: loadSidebarPrefs().width,
   sidebarCollapsed: loadSidebarPrefs().collapsed,
+  sidebarView: loadSidebarView(),
+  fileEditor: null,
+  pendingMentions: {},
+  explorerExpanded: {},
+  repoStatus: {},
   dashboardOpen: false,
   activeProjectId: null,
   focus: null,
@@ -467,6 +483,55 @@ export function setInspectorTab(tab: InspectorTab): void {
 }
 
 /** Sets sidebar width and/or collapsed state, clamps the width, and remembers both for next launch. */
+/** Switches the sidebar view and remembers the choice. */
+export function setSidebarView(view: SidebarView): void {
+  setState({ sidebarView: view })
+  saveSidebarView(view)
+}
+
+/**
+ * Attaches project files to an agent's chat. They join the agent's draft as @mentions, the form the
+ * composer inserts, and the chat is brought into view. A chat that is not mounted takes them on mount.
+ */
+export function attachToChat(agentId: string, paths: string[]): void {
+  if (!paths.length) return
+  setState((s) => ({
+    pendingMentions: { ...s.pendingMentions, [agentId]: [...(s.pendingMentions[agentId] ?? []), ...paths] },
+    selectedId: agentId,
+    inspectorOpen: true,
+    inspectorTab: 'chat',
+  }))
+}
+
+/** Clears the attachments a chat has taken into its draft. */
+export function takeMentions(agentId: string): void {
+  setState((s) => {
+    if (!s.pendingMentions[agentId]) return {}
+    const next = { ...s.pendingMentions }
+    delete next[agentId]
+    return { pendingMentions: next }
+  })
+}
+
+/** Opens a file in the editor dialog. Only one file is open at a time. */
+export function openFileEditor(projectId: string, path: string): void {
+  setState({ fileEditor: { projectId, path } })
+}
+
+export function closeFileEditor(): void {
+  setState({ fileEditor: null })
+}
+
+/** Records which folders are expanded for a project. An empty list removes the entry. */
+export function setExplorerExpanded(projectId: string, dirs: string[]): void {
+  setState((s) => {
+    const next = { ...s.explorerExpanded }
+    if (dirs.length) next[projectId] = dirs
+    else delete next[projectId]
+    return { explorerExpanded: next }
+  })
+}
+
 export function setSidebar(patch: { width?: number; collapsed?: boolean }): void {
   setState((s) => ({
     sidebarWidth: patch.width === undefined ? s.sidebarWidth : clampSidebarWidth(patch.width),

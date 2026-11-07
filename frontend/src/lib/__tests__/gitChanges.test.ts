@@ -3,7 +3,7 @@ import { changeLabel, groupChanges, rowKey } from '../gitChanges'
 import type { GitChange } from '../../types'
 
 function change(overrides: Partial<GitChange>): GitChange {
-  return { path: 'a.go', staged: false, unstaged: false, untracked: false, index: ' ', worktree: 'M', ...overrides }
+  return { path: 'a.go', staged: false, unstaged: false, untracked: false, conflicted: false, index: ' ', worktree: 'M', ...overrides }
 }
 
 describe('groupChanges', () => {

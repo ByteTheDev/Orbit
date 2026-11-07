@@ -19,6 +19,7 @@ export type {
     Conversation,
     ConversationLine,
     FileActivity,
+    FileEvent,
     FileOpRecord,
     Handoff,
     ImageUpload,

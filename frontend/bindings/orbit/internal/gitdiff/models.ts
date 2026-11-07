@@ -20,6 +20,49 @@ export interface Change {
      */
     "index": string;
     "worktree": string;
+
+    /**
+     * Conflicted is set for paths git could not merge.
+     */
+    "conflicted": boolean;
+}
+
+/**
+ * CommitDetail is one commit with the files it changed.
+ */
+export interface CommitDetail {
+    "hash": string;
+    "short": string;
+    "subject": string;
+    "author": string;
+
+    /**
+     * unix milliseconds
+     */
+    "at": number;
+
+    /**
+     * Agent is the agent named by the Orbit-Agent trailer. Empty for commits Orbit did not make.
+     */
+    "agent": string;
+    "body": string;
+    "files": CommitFile[] | null;
+}
+
+/**
+ * CommitFile is one file a commit touched.
+ */
+export interface CommitFile {
+    "path": string;
+    "oldPath"?: string;
+
+    /**
+     * A added, M modified, D deleted, R renamed, C copied, T type changed
+     */
+    "status": string;
+    "additions": number;
+    "deletions": number;
+    "binary": boolean;
 }
 
 /**
@@ -35,6 +78,34 @@ export interface CommitInfo {
      * unix milliseconds
      */
     "at": number;
+
+    /**
+     * Agent is the agent named by the Orbit-Agent trailer. Empty for commits Orbit did not make.
+     */
+    "agent": string;
+}
+
+/**
+ * DiscardTarget is one change to throw away. Untracked marks files git has never seen.
+ */
+export interface DiscardTarget {
+    "path": string;
+    "oldPath"?: string;
+    "index": string;
+    "worktree": string;
+    "untracked": boolean;
+}
+
+/**
+ * FileState is git's view of one path, the same codes the Changes tab shows.
+ */
+export interface FileState {
+    "index": string;
+    "worktree": string;
+    "staged": boolean;
+    "unstaged": boolean;
+    "untracked": boolean;
+    "oldPath"?: string;
 }
 
 /**
@@ -47,4 +118,21 @@ export interface RepoStatus {
     "branch": string;
     "hasCommits": boolean;
     "changes": Change[] | null;
+
+    /**
+     * Upstream is the remote branch Branch tracks, empty when there is none.
+     */
+    "upstream": string;
+    "ahead": number;
+    "behind": number;
+
+    /**
+     * Remote reports whether the repository has any remote configured.
+     */
+    "remote": boolean;
+
+    /**
+     * Conflicts counts paths with unresolved merge conflicts.
+     */
+    "conflicts": number;
 }

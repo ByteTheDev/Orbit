@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { useStore, setFocusMode, setInspectorTab, selectAgent, openDialog, toast, toggleGalaxyBesideChat, type InspectorTab } from '../../lib/store'
 import { INSPECTOR_DEFAULT, INSPECTOR_MAX, INSPECTOR_MIN, clampInspectorWidth, loadInspectorWidth, saveInspectorWidth, toggleInspectorWidth } from '../../lib/inspectorPrefs'
-import { loadDetail, renameAgent, resumeAgent, stopAgent } from '../../lib/actions'
+import { loadDetail, renameAgent, resumeAgent } from '../../lib/actions'
 import { baseName, dirName, elapsed, plural, tokens, timeAgo, usd } from '../../lib/format'
 import { STATUS_COLOR } from '../../lib/theme'
 import type { AgentSummary, Capabilities, FileActivity, Usage } from '../../types'
-import { Button, IconAlert, IconChat, IconFiles, IconInfo, IconPencil, IconPlay, IconStop, IconTrash, IconX, ProviderMark, StatusPill, Tag, type IconProps } from '../ui'
+import { Button, IconAlert, IconChat, IconFiles, IconInfo, IconPencil, IconPlay, IconTrash, IconX, ProviderMark, Tag, type IconProps } from '../ui'
 import { FileIcon } from '../ui/FileIcon'
 import { ChatTab } from './ChatTab'
 import { IconBranch, IconCollapse, IconExpand, IconGalaxy, IconMaximize, IconMinimize, IconRetry } from './inspectorIcons'
@@ -416,14 +416,7 @@ function Header({
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-2">
-        <StatusPill status={agent.status} detail={agent.statusDetail} />
         <div className="ml-auto flex items-center gap-1">
-          {agent.running && caps.stop && (
-            <Button variant="danger" size="sm" onClick={() => void stopAgent(agent.id)} className="h-6 px-2 text-caption">
-              <IconStop size={10} />
-              Stop
-            </Button>
-          )}
           {!agent.running && caps.resume && agent.turns > 0 && (
             <Button variant="secondary" size="sm" onClick={() => void resumeAgent(agent.id)} className="h-7">
               <IconPlay size={10} />

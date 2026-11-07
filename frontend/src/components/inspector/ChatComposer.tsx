@@ -9,6 +9,7 @@ import { IMAGE_TYPES, MAX_IMAGES, type PendingImage } from '../../lib/chatImages
 import { effortName, effortTone } from '../../lib/effort'
 import { Button, IconPlus, IconShield, IconStopCircle, IconX, MaterialIcon, ModelPicker, Select } from '../ui'
 import { SpeedPicker, speedOf, speedOptionsFor } from '../ui/SpeedPicker'
+import { mentionAt } from '../../lib/mention'
 import { IconSend } from './inspectorIcons'
 
 /** The composer grows with its text up to this height, then scrolls. */
@@ -33,6 +34,17 @@ export interface ChatComposerProps {
   onSubmit: () => void
   onStop: () => void
   enterToSend: boolean
+  /** Slash commands that apply right now. Typing "/" offers them. */
+  commands: SlashCommand[]
+  onCommand: (name: string) => void
+}
+
+/** A "/name" command the composer offers. `run` lives in ChatTab, which owns the agent's state. */
+export interface SlashCommand {
+  name: string
+  description: string
+  available: boolean
+  run: () => void
 }
 
 /**
@@ -57,6 +69,9 @@ function useBranches(projectId: string, agentBranch: string | undefined): Branch
 
 export function ChatComposer(props: ChatComposerProps) {
   const { agent, draft, images, busy, sending } = props
+  // A lone "/word" at the start of the draft offers the commands whose names begin with that word.
+  const slashQuery = /^\/\S*$/.test(draft) ? draft.slice(1).toLowerCase() : null
+  const slashMatches = slashQuery === null ? [] : props.commands.filter((c) => c.name.startsWith(slashQuery))
   const caps = agent.capabilities
   const models = caps.models ?? []
   const selectedModel = models.find((m) => m.id === agent.model)
@@ -79,6 +94,7 @@ export function ChatComposer(props: ChatComposerProps) {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [mentionStart, setMentionStart] = useState<number>(-1)
   const [mentionDir, setMentionDir] = useState<string>('')
+  const mentionRun = useRef(0)
 
   // Grow with the text. The height is reset first so the box can also shrink again.
   useLayoutEffect(() => {
@@ -92,30 +108,26 @@ export function ChatComposer(props: ChatComposerProps) {
   const canSubmit = draft.trim() !== '' || images.length > 0
 
   const updateMentions = (value: string, cursor: number) => {
-    const at = value.lastIndexOf('@', cursor - 1)
-    if (at < 0 || (at > 0 && !/\\s/.test(value[at - 1]))) {
+    const mention = mentionAt(value, cursor)
+    if (!mention) {
+      mentionRun.current++
       setSuggestions([])
       setMentionStart(-1)
       return
     }
-    const token = value.slice(at + 1, cursor)
-    if (/\\s/.test(token)) {
-      setSuggestions([])
-      setMentionStart(-1)
-      return
-    }
-    const slash = token.lastIndexOf('/')
-    const dir = slash >= 0 ? token.slice(0, slash) : ''
-    const prefix = slash >= 0 ? token.slice(slash + 1) : token
-    setMentionStart(at)
-    setMentionDir(dir)
+    setMentionStart(mention.start)
+    setMentionDir(mention.dir)
+    // Each keystroke starts a new lookup. Only the latest one may fill the list, so a slow folder read cannot overwrite newer results.
+    const run = ++mentionRun.current
     api
-      .listProjectFiles(agent.projectId, dir)
+      .listProjectFiles(agent.projectId, mention.dir)
       .then((names) => {
-        const filtered = names.filter((n) => n.toLowerCase().startsWith(prefix.toLowerCase())).slice(0, 8)
-        setSuggestions(filtered)
+        if (run !== mentionRun.current) return
+        setSuggestions(names.filter((n) => n.toLowerCase().startsWith(mention.prefix.toLowerCase())).slice(0, 8))
       })
-      .catch(() => setSuggestions([]))
+      .catch(() => {
+        if (run === mentionRun.current) setSuggestions([])
+      })
   }
 
   const chooseMention = (name: string) => {
@@ -136,8 +148,8 @@ export function ChatComposer(props: ChatComposerProps) {
       }
     })
   }
-  // While a reply runs, an empty composer shows Stop. Anything typed becomes a queued message.
-  const showStop = busy && caps.stop && !canSubmit
+  // While a reply runs, Stop is always available, and anything typed becomes a queued message.
+  const showStop = busy && caps.stop
   const hint = busy
     ? 'Sends when this reply finishes'
     : props.enterToSend
@@ -145,7 +157,7 @@ export function ChatComposer(props: ChatComposerProps) {
       : 'Ctrl+Enter to send · Enter for a new line'
 
   return (
-    <div className="mx-auto w-full max-w-[52rem] @container">
+    <div className="mx-auto w-full max-w-[48rem] @container">
       <div
         role="group"
         aria-label="Message composer"
@@ -197,6 +209,22 @@ export function ChatComposer(props: ChatComposerProps) {
           className="block max-h-[220px] min-h-[44px] w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-body leading-relaxed text-ink outline-none placeholder:text-faint"
         />
 
+        {slashMatches.length > 0 && (
+          <ul aria-label="Commands" className="mx-2 mb-1 overflow-hidden rounded-md border border-tint/10 bg-canvas/95 p-1 text-caption">
+            {slashMatches.map((c) => (
+              <li key={c.name}>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-3 rounded px-2 py-1 text-left hover:bg-tint/10"
+                  onClick={() => props.onCommand(c.name)}
+                >
+                  <span className="font-mono text-ink">/{c.name}</span>
+                  <span className="min-w-0 truncate text-faint">{c.description}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         {suggestions.length > 0 && (
           <ul className="mx-2 mb-1 max-h-40 overflow-auto rounded-md border border-tint/10 bg-canvas/95 p-1 text-sm">
             {suggestions.map((s) => (
@@ -310,30 +338,49 @@ export function ChatComposer(props: ChatComposerProps) {
             </div>
           )}
 
-          {showStop ? (
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={props.onStop}
-              aria-label="Stop agent"
-              title="Stop agent"
-              className="ml-auto h-7 w-7 shrink-0 rounded-full px-0"
-            >
-              <IconStopCircle size={15} />
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={props.onSubmit}
-              disabled={!canSubmit || sending}
-              aria-label={busy ? 'Queue message' : 'Send message'}
-              title={busy ? 'Queue message' : 'Send'}
-              className="ml-auto h-7 w-7 shrink-0 rounded-full px-0 transition-opacity duration-150 disabled:opacity-40"
-            >
-              <IconSend size={12} />
-            </Button>
-          )}
+          {/* Three distinct actions. Stop is always there while a reply runs. Queue appears once something is typed. Send is the idle state. */}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {showStop && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={props.onStop}
+                aria-label="Stop agent"
+                title="Stop the reply"
+                className="h-7 gap-1.5 rounded-full px-2.5 text-caption text-danger-soft"
+              >
+                <IconStopCircle size={14} />
+                Stop
+              </Button>
+            )}
+            {busy ? (
+              canSubmit && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={props.onSubmit}
+                  disabled={sending}
+                  aria-label="Queue message"
+                  title="Queue: sends when this reply finishes"
+                  className="h-7 rounded-full px-3 text-caption transition-opacity duration-150 disabled:opacity-40"
+                >
+                  Queue
+                </Button>
+              )
+            ) : (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={props.onSubmit}
+                disabled={!canSubmit || sending}
+                aria-label="Send message"
+                title="Send (Enter)"
+                className="h-7 w-7 rounded-full px-0 transition-opacity duration-150 disabled:opacity-40"
+              >
+                <IconSend size={12} />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
