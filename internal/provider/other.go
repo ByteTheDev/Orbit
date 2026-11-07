@@ -159,6 +159,12 @@ func fetchOpenCodeModels() []model.ModelOption {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// The catalog carries each model's thinking variants. Older builds without it fall back to the plain list.
+	if raw, err := exec.CommandContext(ctx, d.Path, "api", "model.list").Output(); err == nil {
+		if list, ok := parseOpenCodeCatalog(raw); ok {
+			return list
+		}
+	}
 	cmd := exec.CommandContext(ctx, d.Path, "models")
 	out, err := cmd.Output()
 	if err != nil {
@@ -179,6 +185,43 @@ func fetchOpenCodeModels() []model.ModelOption {
 		out2 = append(out2, model.ModelOption{ID: id, Label: id, Group: group})
 	}
 	return out2
+}
+
+// parseOpenCodeCatalog reads `opencode api model.list`. Each model's id is provider/model, the
+// same form `opencode models` prints, and its thinking levels are the variant ids, lowest first.
+func parseOpenCodeCatalog(raw []byte) ([]model.ModelOption, bool) {
+	var payload struct {
+		Data []struct {
+			ProviderID string `json:"providerID"`
+			ModelID    string `json:"modelID"`
+			Variants   []struct {
+				ID string `json:"id"`
+			} `json:"variants"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || len(payload.Data) == 0 {
+		return nil, false
+	}
+	out := make([]model.ModelOption, 0, len(payload.Data))
+	seen := map[string]bool{}
+	for _, m := range payload.Data {
+		if m.ProviderID == "" || m.ModelID == "" {
+			continue
+		}
+		id := m.ProviderID + "/" + m.ModelID
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		effort := []string{}
+		for _, v := range m.Variants {
+			if v.ID != "" {
+				effort = append(effort, v.ID)
+			}
+		}
+		out = append(out, model.ModelOption{ID: id, Label: id, Group: m.ProviderID, Effort: effort})
+	}
+	return out, len(out) > 0
 }
 
 func (p OMP) Run(ctx context.Context, spec Spec, emit func(Update)) error {
@@ -226,8 +269,13 @@ func openCodeArgs(spec Spec) []string {
 	if spec.Resume && spec.SessionID != "" {
 		args = append(args, "--session", spec.SessionID)
 	}
+	// Thinking is the model's variant, written as provider/model#variant. The run flags have no separate option for it.
 	if spec.Model != "" {
-		args = append(args, "--model", spec.Model)
+		id := spec.Model
+		if spec.Effort != "" {
+			id += "#" + spec.Effort
+		}
+		args = append(args, "--model", id)
 	}
 	if spec.PermissionMode == "auto" {
 		args = append(args, "--auto")

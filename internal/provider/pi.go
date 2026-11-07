@@ -115,7 +115,7 @@ func fetchPiModels() []model.ModelOption {
 		if i := strings.IndexByte(id, '/'); i >= 0 {
 			group = id[:i]
 		}
-		out2 = append(out2, model.ModelOption{ID: id, Label: id, Group: group})
+		out2 = append(out2, model.ModelOption{ID: id, Label: id, Group: group, Effort: []string{"off", "minimal", "low", "medium", "high", "xhigh"}, DefaultEffort: "medium"})
 	}
 	return out2
 }

@@ -1,23 +1,30 @@
 /**
  * Release metadata for the release dialog. Pure data and helpers, no Wails or React.
  *
- * APP_VERSION mirrors the Version set in app.go. The latest-release lookup is not
- * wired yet, so callers pass `null` until the backend exists.
+ * APP_VERSION mirrors release.Version in internal/release. A Go test fails if they differ.
  */
 
-export const APP_VERSION = '0.1.0'
+import type { ReleaseInfo } from '../types'
 
-/** The shape the backend will return for the latest published release. */
-export interface ReleaseInfo {
-  version: string
-  publishedAt: number
-  notes: string
-  url: string
+export type { ReleaseInfo }
+
+export const APP_VERSION = '1.0.1'
+
+/** True when version `a` is newer than `b`. Compares dotted numbers, so "1.0.10" is newer than "1.0.9". */
+export function isNewer(a: string, b: string): boolean {
+  const pa = a.split('.').map((p) => Number(p) || 0)
+  const pb = b.split('.').map((p) => Number(p) || 0)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0
+    const y = pb[i] ?? 0
+    if (x !== y) return x > y
+  }
+  return false
 }
 
 /** Human-readable line for the release state shown in the dialog. */
 export function releaseSummary(latest: ReleaseInfo | null, current: string = APP_VERSION): string {
   if (!latest) return `You're on Orbit ${current}. No release information is available yet.`
-  if (latest.version === current) return `You're on the latest release, ${current}.`
-  return `Version ${latest.version} is available. You're on ${current}.`
+  if (isNewer(latest.version, current)) return `Version ${latest.version} is available. You're on ${current}.`
+  return `You're on the latest release, ${current}.`
 }

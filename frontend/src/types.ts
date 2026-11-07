@@ -245,6 +245,15 @@ export interface ProviderInfo {
   capabilities: Capabilities
 }
 
+/** The newest published Orbit release, as the update check reports it. */
+export interface ReleaseInfo {
+  version: string
+  /** Unix milliseconds. */
+  publishedAt: number
+  notes: string
+  url: string
+}
+
 export interface Snapshot {
   projects: ProjectSummary[]
   agents: AgentSummary[]

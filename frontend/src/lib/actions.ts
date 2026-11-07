@@ -1,6 +1,6 @@
 // User actions. Each one calls the backend, reports failures as toasts, and keeps
 // components free of error plumbing.
-import type { BrowserPage, ImageUpload, LaunchRequest } from '../types'
+import type { BrowserPage, ImageUpload, LaunchRequest, ReleaseInfo } from '../types'
 import { api, errorText } from './bridge'
 import type { PhysicalBounds } from './browserPane'
 import { closeDialog, focusAgent, getState, selectAgent, setDetail, setDetailError, setState, toast } from './store'
@@ -257,6 +257,31 @@ export async function pageViewOpen(address: string, b: PhysicalBounds): Promise<
 export async function pageViewNavigate(address: string): Promise<void> {
   try {
     await api.browserPaneNavigate(address)
+  } catch (err) {
+    toast(errorText(err), 'error')
+  }
+}
+
+/**
+ * Asks GitHub for the newest release. Returns the result, or null after a failure, which is
+ * reported as a toast. A repository with no published release is not a failure: it returns null
+ * as the release, so the dialog can say so.
+ */
+export async function checkForUpdates(): Promise<{ latest: ReleaseInfo | null } | null> {
+  try {
+    return { latest: await api.checkForUpdate() }
+  } catch (err) {
+    const text = errorText(err)
+    if (text.includes('no published release yet')) return { latest: null }
+    toast(`Could not check for updates: ${text}`, 'error')
+    return null
+  }
+}
+
+/** Opens a release's page in the default browser. */
+export async function openReleasePage(url: string): Promise<void> {
+  try {
+    await api.browserOpenExternal(url)
   } catch (err) {
     toast(errorText(err), 'error')
   }

@@ -388,6 +388,20 @@ export interface ProviderLimits {
 }
 
 /**
+ * ReleaseInfo is the newest published Orbit release, as the update check reports it.
+ */
+export interface ReleaseInfo {
+    "version": string;
+
+    /**
+     * Unix milliseconds
+     */
+    "publishedAt": number;
+    "notes": string;
+    "url": string;
+}
+
+/**
  * Status is the observable state of an agent.
  */
 export enum Status {

@@ -12,7 +12,9 @@ import {
   type ToastLength,
 } from '../../lib/settings'
 import { SHORTCUTS } from '../../lib/shortcuts'
-import { APP_VERSION, releaseSummary, type ReleaseInfo } from '../../lib/release'
+import { checkForUpdates, openReleasePage } from '../../lib/actions'
+import { APP_VERSION, isNewer, releaseSummary } from '../../lib/release'
+import type { ReleaseInfo } from '../../types'
 import { Button, Dialog, Kbd } from '../ui'
 
 export type SectionId = 'appearance' | 'chat' | 'notifications' | 'keyboard' | 'release' | 'reset'
@@ -225,8 +227,21 @@ function KeyboardSection() {
 }
 
 function ReleaseSection() {
-  // The latest-release lookup is not wired to the backend yet, so there is no release to show.
-  const latest: ReleaseInfo | null = null
+  const [checked, setChecked] = useState(false)
+  const [latest, setLatest] = useState<ReleaseInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  const newer = latest !== null && isNewer(latest.version, APP_VERSION)
+
+  const check = async () => {
+    setBusy(true)
+    const result = await checkForUpdates()
+    setBusy(false)
+    if (result) {
+      setLatest(result.latest)
+      setChecked(true)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Group title="Current version" hint="The version of Orbit you are running.">
@@ -234,11 +249,16 @@ function ReleaseSection() {
       </Group>
 
       <Group title="Latest release" hint="Checked against published releases.">
-        <p className="text-body text-muted">{releaseSummary(latest)}</p>
-        <div>
-          <Button variant="secondary" size="sm" disabled title="Available once the release backend is connected">
-            Check for updates
+        <p className="text-body text-muted">{checked ? releaseSummary(latest) : 'Not checked yet.'}</p>
+        <div className="flex gap-2">
+          <Button variant="secondary" size="sm" disabled={busy} onClick={() => void check()}>
+            {busy ? 'Checking…' : 'Check for updates'}
           </Button>
+          {latest && newer && (
+            <Button size="sm" onClick={() => void openReleasePage(latest.url)}>
+              Open release page
+            </Button>
+          )}
         </div>
       </Group>
     </div>

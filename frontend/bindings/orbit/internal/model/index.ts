@@ -26,6 +26,7 @@ export type {
     Point,
     ProjectSummary,
     ProviderLimits,
+    ReleaseInfo,
     SubAgent,
     ToolCall,
     Usage

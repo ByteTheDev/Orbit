@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"orbit/internal/gitdiff"
 	"orbit/internal/model"
 	"orbit/internal/provider"
+	"orbit/internal/release"
 	"orbit/internal/store"
 	"orbit/internal/terminal"
 	"orbit/internal/webpane"
@@ -201,7 +203,7 @@ func (a *App) GetSnapshot() Snapshot {
 		Providers:    provider.Infos(),
 		StatePath:    a.statePath,
 		StorageError: storageErr,
-		Version:      "0.1.0",
+		Version:      release.Version,
 	}
 }
 
@@ -325,6 +327,14 @@ func (a *App) BrowserFetch(address string) (browser.Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, browser.DefaultTimeout+5*time.Second)
 	defer cancel()
 	return browser.Fetch(ctx, address)
+}
+
+// CheckForUpdate asks GitHub for the newest published Orbit release. It returns an error when
+// GitHub cannot be reached, and release.ErrNoRelease when nothing has been published yet.
+func (a *App) CheckForUpdate() (model.ReleaseInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return release.Latest(ctx, &http.Client{})
 }
 
 // BrowserOpenExternal opens a web address in the user's default browser, for pages the

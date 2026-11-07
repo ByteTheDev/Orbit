@@ -123,6 +123,14 @@ export function BrowserPaneSupported(): $CancellablePromise<boolean> {
 }
 
 /**
+ * CheckForUpdate asks GitHub for the newest published Orbit release. It returns an error when
+ * GitHub cannot be reached, and release.ErrNoRelease when nothing has been published yet.
+ */
+export function CheckForUpdate(): $CancellablePromise<model$0.ReleaseInfo> {
+    return $Call.ByID(2347956003);
+}
+
+/**
  * CloseTerminal ends a terminal and its shell.
  */
 export function CloseTerminal(terminalID: string): $CancellablePromise<void> {

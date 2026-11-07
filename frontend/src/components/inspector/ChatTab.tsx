@@ -7,7 +7,7 @@ import { toast, useStore } from '../../lib/store'
 import { STATUS_COLOR } from '../../lib/theme'
 import { parseBlocks, parseInline, type Block } from '../../lib/markdown'
 import { toolKind, type ToolKind } from '../../lib/toolKind'
-import { Button, IconCheck, IconPencil, IconPlay, IconStop, IconX, ProviderMark } from '../ui'
+import { Button, IconCheck, IconPencil, IconPlay, IconStopCircle, IconX, ProviderMark } from '../ui'
 import {
   IconAgent,
   IconChevronRight,
@@ -307,23 +307,6 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
       </div>
 
       <div className="shrink-0 border-t border-line bg-sidebar p-3">
-        {busy && (
-          <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-status-thinking/20 bg-status-thinking/[0.05] py-1.5 pl-3 pr-1.5 text-caption text-status-thinking">
-            <span className="flex min-w-0 items-center gap-2" role="status">
-              <span className="relative flex h-1.5 w-1.5 shrink-0">
-                <span className="absolute inset-0 animate-ping rounded-full bg-status-thinking/60 motion-reduce:animate-none" />
-                <span className="relative h-1.5 w-1.5 rounded-full bg-status-thinking" />
-              </span>
-              <span className="truncate">Working{agent.statusDetail ? ` · ${agent.statusDetail}` : ''}</span>
-            </span>
-            {caps.stop && (
-              <Button variant="danger" size="sm" onClick={onStop} className="h-6 px-2 text-label">
-                <IconStop size={9} />
-                Stop
-              </Button>
-            )}
-          </div>
-        )}
         {!busy && caps.resume && agent.turns > 0 && (
           <div className="mb-2 flex justify-end">
             <Button variant="ghost" size="sm" onClick={() => void resumeAgent(agent.id)} className="h-6 px-2 text-label">
@@ -432,17 +415,30 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
                     e.target.value = ''
                   }}
                 />
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void submit()}
-                  disabled={(!draft.trim() && images.length === 0) || sending}
-                  aria-label={busy ? 'Queue message' : 'Send message'}
-                  className="h-7 shrink-0 rounded-md px-3"
-                >
-                  <IconSend size={12} />
-                  {busy ? 'Queue' : sending ? 'Sending…' : 'Send'}
-                </Button>
+                {busy && caps.stop && !draft.trim() && images.length === 0 ? (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={onStop}
+                    aria-label="Stop agent"
+                    title="Stop agent"
+                    className="h-7 w-7 shrink-0 rounded-md px-0"
+                  >
+                    <IconStopCircle size={15} />
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => void submit()}
+                    disabled={(!draft.trim() && images.length === 0) || sending}
+                    aria-label={busy ? 'Queue message' : 'Send message'}
+                    className="h-7 shrink-0 rounded-md px-3"
+                  >
+                    <IconSend size={12} />
+                    {busy ? 'Queue' : sending ? 'Sending…' : 'Send'}
+                  </Button>
+                )}
               </div>
             </div>
           </div>

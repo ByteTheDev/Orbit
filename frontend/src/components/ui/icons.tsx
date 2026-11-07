@@ -157,6 +157,14 @@ export const IconStop = (p: IconProps) => (
   </Icon>
 )
 
+/** A stop square inside a ring: the composer's stop button. */
+export const IconStopCircle = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none" />
+  </Icon>
+)
+
 export const IconTrash = (p: IconProps) => (
   <Icon {...p}>
     <path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5" />

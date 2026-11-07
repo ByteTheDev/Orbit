@@ -1,6 +1,6 @@
 module orbit
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/aymanbagabas/go-pty v0.2.3

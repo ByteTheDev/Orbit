@@ -73,7 +73,7 @@ jobs:
           install -m 755 bin/Orbit package/usr/bin/orbit
           install -m 644 build/appicon.png package/usr/share/icons/hicolor/256x256/apps/orbit.png
           printf '[Desktop Entry]\nType=Application\nName=Orbit\nExec=orbit\nIcon=orbit\nCategories=Development;\nTerminal=false\n' > package/usr/share/applications/orbit.desktop
-          printf 'Package: orbit\nVersion: 1.0.0\nArchitecture: amd64\nMaintainer: Orbit <spoiledmonster13@gmail.com>\nDepends: libgtk-4-1, libwebkitgtk-6.0-4\nDescription: Desktop orchestrator for coding agents\n' > package/DEBIAN/control
+          printf 'Package: orbit\nVersion: %s\nArchitecture: amd64\nMaintainer: Orbit <spoiledmonster13@gmail.com>\nDepends: libgtk-4-1, libwebkitgtk-6.0-4\nDescription: Desktop orchestrator for coding agents\n' "${GITHUB_REF_NAME#v}" > package/DEBIAN/control
           dpkg-deb --build --root-owner-group package bin/Orbit-linux-amd64.deb
           dpkg-deb --info bin/Orbit-linux-amd64.deb
       - uses: actions/upload-artifact@v4

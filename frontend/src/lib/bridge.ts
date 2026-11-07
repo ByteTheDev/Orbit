@@ -13,6 +13,7 @@ import type {
   OrbitEvent,
   ProviderLimits,
   ProjectSummary,
+  ReleaseInfo,
   Snapshot,
 } from '../types'
 
@@ -100,6 +101,7 @@ export const api = {
   closeTerminal: (terminalId: string) => call<void>((b) => b.CloseTerminal(terminalId)),
   browserFetch: (address: string) => call<BrowserPage>((b) => b.BrowserFetch(address)),
   browserOpenExternal: (address: string) => call<void>((b) => b.BrowserOpenExternal(address)),
+  checkForUpdate: () => call<ReleaseInfo>((b) => b.CheckForUpdate()),
   browserPaneSupported: () => call<boolean>((b) => b.BrowserPaneSupported()),
   browserPaneOpen: (address: string, x: number, y: number, w: number, h: number) =>
     call<void>((b) => b.BrowserPaneOpen(address, x, y, w, h)),

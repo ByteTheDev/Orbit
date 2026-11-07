@@ -592,13 +592,13 @@ func (m *Manager) startTurnLocked(rec *model.AgentRecord, prompt string, images 
 	rec.LastError = ""
 	rec.Status = model.StatusThinking
 	rec.StatusDetail = "Starting"
-	rec.Messages = appendCapped(rec.Messages, model.Message{
+	m.upsertMessageLocked(rec, model.Message{
 		ID:          newID(),
 		Role:        "user",
 		Text:        model.Truncate(prompt, model.MaxTextBytes),
 		At:          now,
 		Attachments: attachmentsOf(images),
-	}, model.MaxMessages)
+	})
 	m.addActivityLocked(rec, "message", "You: "+firstLine(sent, 90))
 	m.markAgentLocked(rec.ID)
 	m.changedLocked()
