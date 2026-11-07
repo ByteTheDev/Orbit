@@ -1,6 +1,16 @@
 // A small external store. Components subscribe to slices with selectors, so a
 // batch of agent events re-renders only the parts of the UI that changed.
 import { useSyncExternalStore } from 'react'
+import { clampSidebarWidth, loadSidebarPrefs, saveSidebarPrefs } from './sidebarPrefs'
+import {
+  TOAST_MS,
+  applySettings,
+  loadSettings,
+  normaliseSettings,
+  resolveReducedMotion,
+  saveSettings,
+  type Settings,
+} from './settings'
 import type {
   ActivityEntry,
   AgentSummary,
@@ -10,20 +20,23 @@ import type {
   OrbitEvent,
   ProjectSummary,
   ProviderInfo,
+  ProviderLimits,
   Snapshot,
   ToolCall,
 } from '../types'
 
-export type InspectorTab = 'overview' | 'chat' | 'activity' | 'files' | 'tools' | 'issues'
+export type InspectorTab = 'overview' | 'chat' | 'files' | 'changes'
 
 export type Dialog =
   | { kind: 'project' }
   | { kind: 'launch'; projectId?: string }
   | { kind: 'file'; agentId: string; path: string }
   | { kind: 'shortcuts' }
+  | { kind: 'settings' }
   | { kind: 'remove'; agentId: string }
   | { kind: 'deleteProject'; projectId: string }
   | { kind: 'projectIcon'; projectId: string }
+  | { kind: 'browser'; url?: string }
   | null
 
 export interface Toast {
@@ -49,6 +62,8 @@ export interface State {
   storageError: string | null
   statePath: string
   providers: ProviderInfo[]
+  /** Each provider's usage allowance. Refreshed by refreshLimits. Empty until the first read. */
+  limits: ProviderLimits[]
   projects: Record<string, ProjectSummary>
   projectOrder: string[]
   agents: Record<string, AgentSummary>
@@ -60,13 +75,20 @@ export interface State {
   inspectorOpen: boolean
   inspectorTab: InspectorTab
   projectsOpen: boolean
+  /** Sidebar width in px, within SIDEBAR_MIN..SIDEBAR_MAX. Persisted by setSidebar. */
+  sidebarWidth: number
+  /** Narrow rail of project marks instead of the full navigator. Persisted by setSidebar. */
+  sidebarCollapsed: boolean
   /** Full-width dashboard of every agent across every project. */
   dashboardOpen: boolean
   activeProjectId: string | null
   focus: { id: string; nonce: number } | null
   dialog: Dialog
   toasts: Toast[]
+  /** Effective reduced-motion flag: the Settings choice, falling back to the OS setting. */
   reducedMotion: boolean
+  /** User preferences. Persisted by setSettings and applied to the document. */
+  settings: Settings
 }
 
 const MAX_ACTIVITY = 500
@@ -93,15 +115,24 @@ const initial: State = {
   selectedId: null,
   inspectorOpen: false,
   inspectorTab: 'overview',
+  limits: [],
   projectsOpen: true,
+  sidebarWidth: loadSidebarPrefs().width,
+  sidebarCollapsed: loadSidebarPrefs().collapsed,
   dashboardOpen: false,
   activeProjectId: null,
   focus: null,
   dialog: null,
   toasts: [],
-  reducedMotion:
-    typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true,
+  reducedMotion: false,
+  settings: loadSettings(),
 }
+
+// The OS reduced-motion preference, kept apart so a Settings choice can override it and then be undone.
+let systemReducedMotion =
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+initial.reducedMotion = resolveReducedMotion(initial.settings.motion, systemReducedMotion)
+applySettings(initial.settings, initial.reducedMotion)
 
 let state: State = initial
 const listeners = new Set<() => void>()
@@ -389,6 +420,31 @@ export function setInspectorTab(tab: InspectorTab): void {
   setState({ inspectorTab: tab, inspectorOpen: true })
 }
 
+/** Sets sidebar width and/or collapsed state, clamps the width, and remembers both for next launch. */
+export function setSidebar(patch: { width?: number; collapsed?: boolean }): void {
+  setState((s) => ({
+    sidebarWidth: patch.width === undefined ? s.sidebarWidth : clampSidebarWidth(patch.width),
+    sidebarCollapsed: patch.collapsed ?? s.sidebarCollapsed,
+  }))
+  saveSidebarPrefs({ width: getState().sidebarWidth, collapsed: getState().sidebarCollapsed })
+}
+
+/** Merges a settings change, saves it, and applies it to the document straight away. */
+export function setSettings(patch: Partial<Settings>): void {
+  const settings = normaliseSettings({ ...getState().settings, ...patch })
+  const reducedMotion = resolveReducedMotion(settings.motion, systemReducedMotion)
+  saveSettings(settings)
+  applySettings(settings, reducedMotion)
+  setState({ settings, reducedMotion })
+}
+
+/** Called when the OS reduced-motion preference changes. */
+export function setSystemReducedMotion(reduced: boolean): void {
+  systemReducedMotion = reduced
+  setState({ reducedMotion: resolveReducedMotion(getState().settings.motion, reduced) })
+  applySettings(getState().settings, getState().reducedMotion)
+}
+
 export function openDialog(dialog: Dialog): void {
   setState({ dialog })
 }
@@ -400,7 +456,8 @@ export function closeDialog(): void {
 export function toast(text: string, tone: Toast['tone'] = 'info'): void {
   const id = ++toastSeq
   setState((s) => ({ toasts: [...s.toasts.slice(-3), { id, tone, text }] }))
-  window.setTimeout(() => dismissToast(id), tone === 'error' ? 6500 : 3200)
+  const base = TOAST_MS[getState().settings.toastLength]
+  window.setTimeout(() => dismissToast(id), tone === 'error' ? Math.max(base, 6000) : base)
 }
 
 export function dismissToast(id: number): void {

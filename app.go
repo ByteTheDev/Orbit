@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -11,11 +12,13 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"orbit/internal/agent"
+	"orbit/internal/browser"
 	"orbit/internal/gitdiff"
 	"orbit/internal/model"
 	"orbit/internal/provider"
 	"orbit/internal/store"
 	"orbit/internal/terminal"
+	"orbit/internal/webpane"
 )
 
 // eventName is the single channel for batched agent updates.
@@ -41,12 +44,17 @@ type App struct {
 	ctx       context.Context
 	mgr       *agent.Manager
 	terms     *terminal.Manager
+	limits    provider.LimitsCache
 	statePath string
 	loadErr   string
 
 	saveMu    sync.Mutex
 	saveTimer *time.Timer
 	saveErr   string
+
+	// The native page view for the browser dialog. Created on first use, then reused.
+	paneMu sync.Mutex
+	pane   *webpane.Pane
 }
 
 // NewApp builds the backend. Wails calls startup once the window exists.
@@ -55,6 +63,16 @@ func NewApp() *App {
 	a.mgr = agent.New(a.emitBatch, a.scheduleSave)
 	a.terms = terminal.New(a.emitTerminalOutput, a.emitTerminalExit)
 	return a
+}
+
+// GetLimits returns each provider's usage allowance (the 5-hour and weekly windows). The CLIs are
+// asked at most every few minutes; force asks them now.
+func (a *App) GetLimits(force bool) []model.ProviderLimits {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return a.limits.Get(ctx, force)
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -66,6 +84,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.statePath = path
 	a.mgr.SetIconDir(filepath.Join(filepath.Dir(path), "icons"))
+	a.mgr.SetAttachmentDir(filepath.Join(filepath.Dir(path), "attachments"))
+	// Agents get the browser tool by running this executable with the browser MCP flag.
+	if exe, err := os.Executable(); err == nil {
+		a.mgr.SetBrowserCommand(exe)
+	}
 	st, err := store.Load(path)
 	if err != nil {
 		a.loadErr = err.Error()
@@ -230,6 +253,198 @@ func (a *App) GetFileDiff(agentID, path string) (FileDiffResult, error) {
 
 // ---- projects -------------------------------------------------------------
 
+// ---- git ------------------------------------------------------------------
+
+// GetGitStatus lists the project's branch and uncommitted changes.
+func (a *App) GetGitStatus(projectID string) (gitdiff.RepoStatus, error) {
+	repo, err := a.mgr.ProjectRepo(projectID)
+	if err != nil {
+		return gitdiff.RepoStatus{}, err
+	}
+	return gitdiff.Status(repo)
+}
+
+// GetGitDiff returns the diff for one changed path. staged picks the index side.
+func (a *App) GetGitDiff(projectID, path string, staged, untracked bool) (string, error) {
+	repo, err := a.mgr.ProjectRepo(projectID)
+	if err != nil {
+		return "", err
+	}
+	return gitdiff.Diff(repo, path, staged, untracked)
+}
+
+// GetGitLog returns the most recent commits.
+func (a *App) GetGitLog(projectID string) ([]gitdiff.CommitInfo, error) {
+	repo, err := a.mgr.ProjectRepo(projectID)
+	if err != nil {
+		return nil, err
+	}
+	return gitdiff.Log(repo, 30)
+}
+
+// StageFiles adds paths to the index.
+func (a *App) StageFiles(projectID string, paths []string) error {
+	repo, err := a.mgr.ProjectRepo(projectID)
+	if err != nil {
+		return err
+	}
+	return gitdiff.Stage(repo, paths)
+}
+
+// UnstageFiles removes paths from the index and keeps their edits.
+func (a *App) UnstageFiles(projectID string, paths []string) error {
+	repo, err := a.mgr.ProjectRepo(projectID)
+	if err != nil {
+		return err
+	}
+	return gitdiff.Unstage(repo, paths)
+}
+
+// CommitChanges commits paths (or the whole index when paths is empty) and returns the short hash.
+func (a *App) CommitChanges(projectID, message string, paths []string) (string, error) {
+	repo, err := a.mgr.ProjectRepo(projectID)
+	if err != nil {
+		return "", err
+	}
+	return gitdiff.Commit(repo, message, paths)
+}
+
+// SetProjectAutoCommit turns auto-commit on or off for a project.
+func (a *App) SetProjectAutoCommit(projectID string, on bool) error {
+	return a.mgr.SetProjectAutoCommit(projectID, on)
+}
+
+// BrowserFetch loads a web page for the built-in browser. The address may omit https://.
+// A page that answers with an error status still comes back, with that status.
+func (a *App) BrowserFetch(address string) (browser.Page, error) {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, browser.DefaultTimeout+5*time.Second)
+	defer cancel()
+	return browser.Fetch(ctx, address)
+}
+
+// BrowserOpenExternal opens a web address in the user's default browser, for pages the
+// built-in view cannot show well.
+func (a *App) BrowserOpenExternal(address string) error {
+	if a.ctx == nil {
+		return errors.New("the window is not ready yet")
+	}
+	u, err := browser.ParseURL(address)
+	if err != nil {
+		return err
+	}
+	runtime.BrowserOpenURL(a.ctx, u.String())
+	return nil
+}
+
+// BrowserPaneSupported reports whether the browser dialog can show real web pages here.
+// When it cannot, the dialog uses the text view.
+func (a *App) BrowserPaneSupported() bool {
+	return webpane.Supported()
+}
+
+// BrowserPaneOpen shows the page view over a rectangle of the window, in physical pixels, and
+// loads address when one is given. The view is created on first use and reused afterwards.
+func (a *App) BrowserPaneOpen(address string, x, y, w, h int) error {
+	a.paneMu.Lock()
+	defer a.paneMu.Unlock()
+	if a.pane == nil {
+		p, err := webpane.Open(a.emitPaneState)
+		if err != nil {
+			return err
+		}
+		a.pane = p
+	}
+	a.pane.SetBounds(x, y, w, h)
+	a.pane.Show()
+	if address == "" {
+		return nil
+	}
+	u, err := browser.ParseURL(address)
+	if err != nil {
+		return err
+	}
+	a.pane.Navigate(u.String())
+	return nil
+}
+
+// BrowserPaneNavigate loads an address in the page view. The address may omit https://.
+func (a *App) BrowserPaneNavigate(address string) error {
+	a.paneMu.Lock()
+	defer a.paneMu.Unlock()
+	if a.pane == nil {
+		return errors.New("the page view is not open")
+	}
+	u, err := browser.ParseURL(address)
+	if err != nil {
+		return err
+	}
+	a.pane.Navigate(u.String())
+	return nil
+}
+
+// BrowserPaneSetBounds moves and resizes the page view, in physical pixels relative to the window.
+func (a *App) BrowserPaneSetBounds(x, y, w, h int) {
+	a.paneMu.Lock()
+	defer a.paneMu.Unlock()
+	if a.pane != nil {
+		a.pane.SetBounds(x, y, w, h)
+	}
+}
+
+// BrowserPaneBack goes back in the page view's history.
+func (a *App) BrowserPaneBack() {
+	a.withPane(func(p *webpane.Pane) { p.Back() })
+}
+
+// BrowserPaneForward goes forward in the page view's history.
+func (a *App) BrowserPaneForward() {
+	a.withPane(func(p *webpane.Pane) { p.Forward() })
+}
+
+// BrowserPaneReload loads the current page again.
+func (a *App) BrowserPaneReload() {
+	a.withPane(func(p *webpane.Pane) { p.Reload() })
+}
+
+// BrowserPaneStop cancels the page's pending loads.
+func (a *App) BrowserPaneStop() {
+	a.withPane(func(p *webpane.Pane) { p.Stop() })
+}
+
+// BrowserPaneHide hides the page view but keeps the page, so reopening the browser is instant.
+func (a *App) BrowserPaneHide() {
+	a.withPane(func(p *webpane.Pane) { p.Hide() })
+}
+
+// BrowserPaneClose destroys the page view and frees its engine.
+func (a *App) BrowserPaneClose() {
+	a.paneMu.Lock()
+	defer a.paneMu.Unlock()
+	if a.pane != nil {
+		a.pane.Close()
+		a.pane = nil
+	}
+}
+
+func (a *App) withPane(f func(*webpane.Pane)) {
+	a.paneMu.Lock()
+	defer a.paneMu.Unlock()
+	if a.pane != nil {
+		f(a.pane)
+	}
+}
+
+// emitPaneState sends the page view's state to the frontend. It may be called from the view's thread.
+func (a *App) emitPaneState(ev webpane.Event) {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "browser:pane", ev)
+	}
+}
+
 // PickRepository opens a native folder picker. It returns "" when cancelled.
 func (a *App) PickRepository() (string, error) {
 	if a.ctx == nil {
@@ -276,9 +491,30 @@ func (a *App) LaunchAgent(req agent.LaunchRequest) (model.AgentSummary, error) {
 	return a.mgr.Launch(req)
 }
 
-// SendMessage sends a message, starting a new turn.
-func (a *App) SendMessage(agentID, text string) error {
-	return a.mgr.Send(agentID, text)
+// SendMessage sends a message with optional images, starting a new turn.
+func (a *App) SendMessage(agentID, text string, images []model.ImageUpload) error {
+	return a.mgr.Send(agentID, text, images)
+}
+
+// AttachmentImage returns a chat image as a data URL.
+func (a *App) AttachmentImage(agentID, attachmentID string) (string, error) {
+	return a.mgr.AttachmentImage(agentID, attachmentID)
+}
+
+// DelegateTask asks agent toID to carry out task on behalf of fromID. The galaxy draws the handoff as a beam.
+func (a *App) DelegateTask(fromID, toID, task string) (model.Handoff, error) {
+	return a.mgr.Delegate(fromID, toID, task)
+}
+
+// StartConversation makes two agents in one project talk to each other about topic, passing
+// each reply to the other, for up to maxReplies replies.
+func (a *App) StartConversation(aID, bID, topic string, maxReplies int) (model.Conversation, error) {
+	return a.mgr.StartConversation(aID, bID, topic, maxReplies)
+}
+
+// StopConversation ends an agent-to-agent talk and cancels the reply in progress.
+func (a *App) StopConversation(id string) error {
+	return a.mgr.StopConversation(id)
 }
 
 // ResumeAgent continues the agent's last session.

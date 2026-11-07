@@ -43,8 +43,8 @@ interface Props {
 }
 
 /**
- * A project's mark: its uploaded icon, or its custom letter, or its symbol on its accent.
- * The same identity the galaxy's star uses. Decorative: the row it sits in carries the name.
+ * A project's mark: its uploaded icon, or its custom letter. Renders nothing otherwise, so the
+ * name stands alone. Decorative: the row it sits in carries the name.
  */
 export function ProjectMark({ project, size = 28 }: Props) {
   const identity = identityFor(project.id)
@@ -78,21 +78,6 @@ export function ProjectMark({ project, size = 28 }: Props) {
     )
   }
 
-  const glyph = Math.round(size * 0.56)
-  return (
-    <span className="inline-flex shrink-0 items-center justify-center" style={tile} aria-hidden="true">
-      <svg
-        viewBox="0 0 24 24"
-        width={glyph}
-        height={glyph}
-        fill="none"
-        stroke={identity.accent}
-        strokeWidth={1.6}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d={identity.glyphPath} />
-      </svg>
-    </span>
-  )
+  // No generated fallback: a project with no uploaded icon or letter shows only its name.
+  return null
 }

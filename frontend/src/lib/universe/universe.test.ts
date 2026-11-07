@@ -36,9 +36,9 @@ describe('camera', () => {
 })
 
 const projects: ProjectSummary[] = [
-  { id: 'p1', name: 'One', repoPath: 'a', createdAt: 1, agentCount: 2, runningCount: 0, conflicts: [] },
-  { id: 'p2', name: 'Two', repoPath: 'b', createdAt: 2, agentCount: 0, runningCount: 0, conflicts: [] },
-  { id: 'p3', name: 'Three', repoPath: 'c', createdAt: 3, agentCount: 0, runningCount: 0, conflicts: [] },
+  { id: 'p1', name: 'One', repoPath: 'a', createdAt: 1, agentCount: 2, runningCount: 0, conflicts: [], handoffs: [], conversations: [] },
+  { id: 'p2', name: 'Two', repoPath: 'b', createdAt: 2, agentCount: 0, runningCount: 0, conflicts: [], handoffs: [], conversations: [] },
+  { id: 'p3', name: 'Three', repoPath: 'c', createdAt: 3, agentCount: 0, runningCount: 0, conflicts: [], handoffs: [], conversations: [] },
 ]
 const agentStub = (id: string, projectId: string, position?: { x: number; y: number }): AgentSummary =>
   ({ id, projectId, position, createdAt: Number(id.replace(/\D/g, '')) } as unknown as AgentSummary)
@@ -63,8 +63,9 @@ describe('layout', () => {
   })
 
   it('keeps a dragged planet where it was dropped at the reference time', () => {
+    // A live drag is a world point, passed through overrides. Saved positions are tested separately.
     const drop = { x: 0 + 300, y: 0 + 0 }
-    const l = computeLayout(projects, [agentStub('a1', 'p1', drop)], new Map(), 5)
+    const l = computeLayout(projects, [agentStub('a1', 'p1')], new Map([['a1', drop]]), 5)
     const p = planetPosition(l.planetById.get('a1')!, 5)
     expect(p.x).toBeCloseTo(drop.x, 3)
     expect(p.y).toBeCloseTo(drop.y, 3)

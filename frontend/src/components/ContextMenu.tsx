@@ -69,7 +69,7 @@ export function ContextMenu({ x, y, items, onClose, label }: Props) {
       ref={ref}
       role="menu"
       aria-label={label}
-      className="fixed z-40 min-w-[196px] animate-[fade-in_120ms_ease-out] rounded-lg border border-white/[0.08] bg-popover/95 p-1 shadow-popover backdrop-blur-md motion-reduce:animate-none"
+      className="fixed z-40 min-w-[196px] origin-top-left animate-menu-in rounded-lg border border-white/[0.08] bg-popover/95 p-1 shadow-popover backdrop-blur-md motion-reduce:animate-none"
       style={{ left: pos.left, top: pos.top }}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -82,13 +82,13 @@ export function ContextMenu({ x, y, items, onClose, label }: Props) {
             onClose()
             item.onSelect()
           }}
-          className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-100 hover:bg-white/[0.06] focus:bg-white/[0.06] focus:outline-none disabled:opacity-40 ${
+          className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-body transition-colors duration-100 hover:bg-white/[0.06] focus:bg-white/[0.06] focus:outline-none disabled:opacity-40 ${
             item.danger ? 'text-danger-soft hover:bg-danger/10 focus:bg-danger/10' : 'text-ink'
           }`}
         >
           {item.icon && <span className={`flex shrink-0 ${item.danger ? 'text-danger' : 'text-faint'}`}>{item.icon}</span>}
           <span className="flex-1">{item.label}</span>
-          {item.hint && <span className="font-mono text-[11px] text-faint">{item.hint}</span>}
+          {item.hint && <span className="font-mono text-label text-faint">{item.hint}</span>}
         </button>
       ))}
     </div>

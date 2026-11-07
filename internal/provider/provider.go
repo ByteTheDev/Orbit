@@ -18,6 +18,24 @@ type Spec struct {
 	Resume         bool   // true when continuing SessionID
 	Model          string
 	PermissionMode string
+	// FastMode asks the provider to run this turn in fast mode. Only set for models that support it.
+	FastMode bool
+	// Effort is the thinking effort level for this turn. Empty means the CLI default.
+	Effort string
+	// Images are files attached to this turn's prompt. Adapters read them as they need.
+	Images []Image
+	// BrowserCommand is the Orbit executable that serves the browser tool over MCP. Empty
+	// leaves the browser out of this turn.
+	BrowserCommand string
+}
+
+// browserServerName is the MCP server name the browser is registered under.
+const browserServerName = "orbit-browser"
+
+// Image is one attached picture, stored on disk by the manager.
+type Image struct {
+	Path      string
+	MediaType string
 }
 
 // UpdateKind enumerates the normalised events an adapter can report.
@@ -38,6 +56,9 @@ const (
 	UpdIssue                              // Level (error|warning), Text
 	UpdActivity                           // Text: a plain activity line
 	UpdTurnDone                           // Success, Text: the turn finished
+	UpdSubAgentStart                      // ID = the Task call id, Text = task description, Detail = sub-agent type
+	UpdSubAgentActivity                   // ID = the Task call id, Detail = the sub-agent's latest action
+	UpdSubAgentEnd                        // ID = the Task call id, Failed
 )
 
 // FileTouch describes a read or write. Phase is "start" when the tool begins

@@ -1,11 +1,28 @@
-import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import type { AgentSummary, Message, ToolCall } from '../../types'
-import { loadDetail, resumeAgent, sendMessage, stopAgent } from '../../lib/actions'
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import type { AgentSummary, Attachment, Message, ToolCall } from '../../types'
+import { attachmentImage, loadDetail, resumeAgent, sendMessage, stopAgent } from '../../lib/actions'
+import { IMAGE_TYPES, MAX_IMAGES, addImages, toUploads, type PendingImage } from '../../lib/chatImages'
 import { clock } from '../../lib/format'
-import { toast } from '../../lib/store'
+import { toast, useStore } from '../../lib/store'
 import { STATUS_COLOR } from '../../lib/theme'
-import { Button, IconPlay, IconStop, IconX, ProviderMark } from '../ui'
-import { IconChevronDown, IconChevronRight, IconCopy, IconRetry, IconSend, IconTool } from './inspectorIcons'
+import { parseBlocks, parseInline, type Block } from '../../lib/markdown'
+import { toolKind, type ToolKind } from '../../lib/toolKind'
+import { Button, IconCheck, IconPencil, IconPlay, IconStop, IconX, ProviderMark } from '../ui'
+import {
+  IconAgent,
+  IconChevronRight,
+  IconCopy,
+  IconFileRead,
+  IconFileWrite,
+  IconGlobe,
+  IconImage,
+  IconPlug,
+  IconRetry,
+  IconSearch,
+  IconSend,
+  IconTerminal,
+  IconTool,
+} from './inspectorIcons'
 
 /** Messages and tool calls are shown this many at a time; older ones load on request. */
 const PAGE = 120
@@ -16,11 +33,20 @@ const PAGE = 120
  */
 const drafts = new Map<string, string>()
 
+/** Unsent images, keyed by agent, kept alongside the draft text. */
+const imageDrafts = new Map<string, PendingImage[]>()
+
+/** A message typed while the agent was working, with the images attached to it. */
+interface QueuedMessage {
+  text: string
+  images: PendingImage[]
+}
+
 /**
  * Messages typed while the agent was working. They are sent one at a time when each reply
  * finishes. Kept per agent, so they survive switching tabs.
  */
-const queues = new Map<string, string[]>()
+const queues = new Map<string, QueuedMessage[]>()
 
 interface Props {
   agent: AgentSummary
@@ -61,8 +87,14 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
   const [draft, setDraft] = useState(() => drafts.get(agent.id) ?? '')
   const draftRef = useRef(draft)
   const [sending, setSending] = useState(false)
-  const [queue, setQueue] = useState<string[]>(() => queues.get(agent.id) ?? [])
+  const [queue, setQueue] = useState<QueuedMessage[]>(() => queues.get(agent.id) ?? [])
   const queueRef = useRef(queue)
+  const [images, setImages] = useState<PendingImage[]>(() => imageDrafts.get(agent.id) ?? [])
+  const imagesRef = useRef(images)
+  // Why the last attach attempt was refused, shown under the composer.
+  const [imageNote, setImageNote] = useState('')
+  const [dragging, setDragging] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
   // Set by Stop: a stopped reply should not send the messages queued behind it.
   const stoppedRef = useRef(false)
   const [limit, setLimit] = useState(PAGE)
@@ -79,11 +111,18 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
   const caps = agent.capabilities
   const awaitingReply = busy && last?.kind === 'message' && last.message.role === 'user'
 
-  const setQueueFor = (next: string[]) => {
+  const setQueueFor = (next: QueuedMessage[]) => {
     queueRef.current = next
     setQueue(next)
     if (next.length) queues.set(agent.id, next)
     else queues.delete(agent.id)
+  }
+
+  const setImagesFor = (next: PendingImage[]) => {
+    imagesRef.current = next
+    setImages(next)
+    if (next.length) imageDrafts.set(agent.id, next)
+    else imageDrafts.delete(agent.id)
   }
 
   // When a turn ends, send the next queued message. Acting only on the busy -> idle edge stops
@@ -101,11 +140,16 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
     const [next, ...rest] = queueRef.current
     if (next === undefined) return
     setQueueFor(rest)
+    // The user may have scrolled up while the reply streamed. Pin to the bottom so the sent message is visible.
+    pinned.current = true
     setSending(true)
-    void sendMessage(agent.id, next).then((ok) => {
+    void sendMessage(agent.id, next.text, toUploads(next.images)).then((ok) => {
       setSending(false)
-      // Put a failed message back in the draft so it is not lost.
-      if (!ok && !draftRef.current.trim()) updateDraft(next)
+      // Put a failed message back in the composer so it is not lost.
+      if (!ok && !draftRef.current.trim() && imagesRef.current.length === 0) {
+        updateDraft(next.text)
+        setImagesFor(next.images)
+      }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the busy edge should trigger a send.
   }, [busy])
@@ -135,37 +179,75 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
 
   const submit = async () => {
     const text = draftRef.current.trim()
-    if (!text || sending || !caps.send) return
+    const attached = imagesRef.current
+    if ((!text && attached.length === 0) || sending || !caps.send) return
     if (busy) {
       // Queue it. It is sent when this reply finishes.
-      setQueueFor([...queueRef.current, text])
+      setQueueFor([...queueRef.current, { text, images: attached }])
       updateDraft('')
+      setImagesFor([])
       return
     }
     stoppedRef.current = false
     setSending(true)
-    const ok = await sendMessage(agent.id, text)
+    const ok = await sendMessage(agent.id, text, toUploads(attached))
     setSending(false)
-    // Only clear the draft if it has not changed while the send was in flight.
+    // Only clear the composer if it has not changed while the send was in flight.
     if (ok) {
       pinned.current = true
       if (draftRef.current.trim() === text) updateDraft('')
+      if (imagesRef.current === attached) setImagesFor([])
     }
+  }
+
+  const attachFiles = async (files: File[]) => {
+    if (files.length === 0) return
+    const { added, problems } = await addImages(files, imagesRef.current.length)
+    if (added.length) setImagesFor([...imagesRef.current, ...added])
+    setImageNote(problems.join(' '))
+  }
+
+  // Pasting an image attaches it. Text pastes behave as usual.
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'))
+    if (files.length === 0) return
+    e.preventDefault()
+    void attachFiles(files)
+  }
+
+  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!Array.from(e.dataTransfer.types).includes('Files')) return
+    e.preventDefault()
+    setDragging(true)
+  }
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragging(false)
+    void attachFiles(Array.from(e.dataTransfer.files))
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
-    // Enter sends. Shift+Enter inserts a line. Ctrl/⌘+Enter sends too, for muscle memory from other tools.
-    if (!e.shiftKey) {
-      e.preventDefault()
-      void submit()
+    if (enterToSend) {
+      // Enter sends. Shift+Enter inserts a line. Ctrl/⌘+Enter sends too, for muscle memory from other tools.
+      if (!e.shiftKey) {
+        e.preventDefault()
+        void submit()
+      } else if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        void submit()
+      }
     } else if (e.ctrlKey || e.metaKey) {
+      // Enter-to-send is off: Enter adds a line, and Ctrl/⌘+Enter sends.
       e.preventDefault()
       void submit()
     }
   }
 
   const canSend = caps.send
+
+  const enterToSend = useStore((s) => s.settings.enterToSend)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -185,8 +267,8 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
             <div className="mb-3 opacity-80">
               <ProviderMark provider={agent.provider} size={30} />
             </div>
-            <p className="text-[13px] font-medium text-ink/85">No messages yet</p>
-            <p className="mt-1 max-w-[260px] text-[12px] leading-relaxed text-faint">
+            <p className="text-body font-medium text-ink/85">No messages yet</p>
+            <p className="mt-1 max-w-[260px] text-caption leading-relaxed text-faint">
               {canSend
                 ? 'Send a message to give this agent work. Its replies and tool calls appear here as it works.'
                 : `${agent.providerName} does not accept messages from Orbit. Watch its activity instead.`}
@@ -204,13 +286,21 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
 
         {loaded && timeline.length > 0 && (
           <div className="space-y-4">
-            {shown.map((item) =>
-              item.kind === 'message' ? (
-                <MessageView key={item.key} message={item.message} providerName={agent.providerName} provider={agent.provider} />
+            {groupRuns(shown).map((unit) => {
+              if (unit.kind === 'group') return <ToolGroup key={unit.key} tools={unit.tools} />
+              const item = unit.item
+              return item.kind === 'message' ? (
+                <MessageView
+                  key={item.key}
+                  agentId={agent.id}
+                  message={item.message}
+                  providerName={agent.providerName}
+                  provider={agent.provider}
+                />
               ) : (
                 <ToolRow key={item.key} tool={item.tool} />
-              ),
-            )}
+              )
+            })}
             {awaitingReply && <Thinking name={agent.providerName} />}
           </div>
         )}
@@ -218,7 +308,7 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
 
       <div className="shrink-0 border-t border-line bg-sidebar p-3">
         {busy && (
-          <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-status-thinking/20 bg-status-thinking/[0.05] py-1.5 pl-3 pr-1.5 text-[12px] text-status-thinking">
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-status-thinking/20 bg-status-thinking/[0.05] py-1.5 pl-3 pr-1.5 text-caption text-status-thinking">
             <span className="flex min-w-0 items-center gap-2" role="status">
               <span className="relative flex h-1.5 w-1.5 shrink-0">
                 <span className="absolute inset-0 animate-ping rounded-full bg-status-thinking/60 motion-reduce:animate-none" />
@@ -227,7 +317,7 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
               <span className="truncate">Working{agent.statusDetail ? ` · ${agent.statusDetail}` : ''}</span>
             </span>
             {caps.stop && (
-              <Button variant="danger" size="sm" onClick={onStop} className="h-6 px-2 text-[11px]">
+              <Button variant="danger" size="sm" onClick={onStop} className="h-6 px-2 text-label">
                 <IconStop size={9} />
                 Stop
               </Button>
@@ -236,7 +326,7 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
         )}
         {!busy && caps.resume && agent.turns > 0 && (
           <div className="mb-2 flex justify-end">
-            <Button variant="ghost" size="sm" onClick={() => void resumeAgent(agent.id)} className="h-6 px-2 text-[11px]">
+            <Button variant="ghost" size="sm" onClick={() => void resumeAgent(agent.id)} className="h-6 px-2 text-label">
               <IconPlay size={9} />
               Continue where it stopped
             </Button>
@@ -246,9 +336,12 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
         {canSend && queue.length > 0 && (
           <ul aria-label="Queued messages" className="mb-2 space-y-1">
             {queue.map((q, i) => (
-              <li key={i} className="flex items-center gap-2 rounded-lg border border-line bg-canvas/60 py-1 pl-3 pr-1 text-[12px]">
-                <span className="shrink-0 text-[10.5px] font-medium uppercase tracking-[0.06em] text-faint">Queued</span>
-                <span className="min-w-0 flex-1 truncate text-ink/85">{q}</span>
+              <li key={i} className="flex items-center gap-2 rounded-lg border border-dashed border-line-strong py-1 pl-2.5 pr-1 text-caption">
+                <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-px text-label text-muted">Queued</span>
+                <span className="min-w-0 flex-1 truncate text-muted">
+                  {q.text || 'Image'}
+                  {q.images.length > 0 && <span className="ml-1.5 text-faint">· {q.images.length} image{q.images.length === 1 ? '' : 's'}</span>}
+                </span>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -265,36 +358,96 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
         )}
 
         {canSend ? (
-          <div className="rounded-xl border border-line bg-surface p-2 transition-[border-color,box-shadow] duration-150 hover:border-line-strong focus-within:border-white/25 focus-within:ring-[3px] focus-within:ring-white/[0.06]">
+          <div
+            onDragOver={onDragOver}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            className={`rounded-xl border bg-surface p-2 transition-[border-color,box-shadow] duration-150 hover:border-line-strong focus-within:border-white/25 focus-within:ring-[3px] focus-within:ring-white/[0.06] ${
+              dragging ? 'border-white/40 ring-[3px] ring-white/[0.06]' : 'border-line'
+            }`}
+          >
+            {images.length > 0 && (
+              <ul aria-label="Attached images" className="mb-2 flex flex-wrap gap-2 px-1 pt-1">
+                {images.map((img) => (
+                  <li key={img.id} className="relative">
+                    <img src={img.preview} alt={img.name} title={img.name} className="h-14 w-14 rounded-md border border-line object-cover" />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Remove ${img.name}`}
+                      title="Remove"
+                      onClick={() => setImagesFor(imagesRef.current.filter((i) => i.id !== img.id))}
+                      className="absolute -right-1.5 -top-1.5 h-5 w-5 rounded-full border border-line bg-canvas px-0"
+                    >
+                      <IconX size={9} />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {imageNote && (
+              <p role="alert" className="mb-1.5 px-1.5 text-caption text-danger-soft">
+                {imageNote}
+              </p>
+            )}
             <textarea
               value={draft}
               onChange={(e) => updateDraft(e.target.value)}
               onKeyDown={onKey}
+              onPaste={onPaste}
               aria-busy={sending}
               placeholder={busy ? `${agent.name} is working. Type to queue your next message.` : `Message ${agent.name}…`}
               aria-label={`Message ${agent.name}`}
               rows={2}
-              className="block max-h-40 min-h-[40px] w-full resize-none bg-transparent px-1.5 py-1 text-[13px] leading-relaxed text-ink outline-none placeholder:text-faint"
+              className="block max-h-40 min-h-[40px] w-full resize-none bg-transparent px-1.5 py-1 text-body leading-relaxed text-ink outline-none placeholder:text-faint"
             />
             <div className="mt-1 flex items-center justify-between gap-2 px-1">
-              <span className="truncate text-[10.5px] text-faint">
-                {busy ? 'Sends when this reply finishes' : 'Enter to send · Shift+Enter for a new line'}
+              <span className="truncate text-label text-faint">
+                {busy
+                  ? 'Sends when this reply finishes'
+                  : enterToSend
+                    ? 'Enter to send · Shift+Enter for a new line'
+                    : 'Ctrl+Enter to send · Enter for a new line'}
               </span>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => void submit()}
-                disabled={!draft.trim() || sending}
-                aria-label={busy ? 'Queue message' : 'Send message'}
-                className="h-7 shrink-0 rounded-md px-3"
-              >
-                <IconSend size={12} />
-                {busy ? 'Queue' : sending ? 'Sending…' : 'Send'}
-              </Button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => fileInput.current?.click()}
+                  disabled={sending || images.length >= MAX_IMAGES}
+                  aria-label="Attach images"
+                  title={images.length >= MAX_IMAGES ? `Up to ${MAX_IMAGES} images per message` : 'Attach images'}
+                  className="h-7 w-7 shrink-0 rounded-md px-0"
+                >
+                  <IconImage size={13} />
+                </Button>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept={IMAGE_TYPES.join(',')}
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    void attachFiles(Array.from(e.target.files ?? []))
+                    e.target.value = ''
+                  }}
+                />
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void submit()}
+                  disabled={(!draft.trim() && images.length === 0) || sending}
+                  aria-label={busy ? 'Queue message' : 'Send message'}
+                  className="h-7 shrink-0 rounded-md px-3"
+                >
+                  <IconSend size={12} />
+                  {busy ? 'Queue' : sending ? 'Sending…' : 'Send'}
+                </Button>
+              </div>
             </div>
           </div>
         ) : (
-          <p className="text-[12px] text-faint">Messages are not available for {agent.providerName}.</p>
+          <p className="text-caption text-faint">Messages are not available for {agent.providerName}.</p>
         )}
       </div>
     </div>
@@ -304,20 +457,43 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
 // ---- messages ----------------------------------------------------------------------------
 
 /** Memoised: a streamed delta re-renders only the message that changed, not the whole conversation. */
-const MessageView = memo(function MessageView({ message: m, providerName, provider }: { message: Message; providerName: string; provider: string }) {
+const MessageView = memo(function MessageView({
+  agentId,
+  message: m,
+  providerName,
+  provider,
+}: {
+  agentId: string
+  message: Message
+  providerName: string
+  provider: string
+}) {
   if (m.role === 'system') {
-    return <p className="text-center font-mono text-[10.5px] uppercase tracking-[0.08em] text-faint">{m.text}</p>
+    return <p className="text-center text-label text-faint">{m.text}</p>
   }
 
   if (m.role === 'user') {
+    const attachments = m.attachments ?? []
     return (
       <div className="flex flex-col items-end gap-1">
-        <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-faint">
-          You <span className="ml-1 font-mono normal-case tracking-normal text-faint/80">{clock(m.at)}</span>
+        <span className="text-label text-faint">
+          <span className="font-medium text-muted">You</span>
+          <span className="ml-1.5 font-mono tabular-nums">{clock(m.at)}</span>
         </span>
-        <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-tr-sm border border-line bg-white/[0.05] px-3.5 py-2.5 text-[13px] leading-relaxed text-ink">
-          {m.text}
-        </div>
+        {attachments.length > 0 && (
+          <ul aria-label="Attached images" className="flex max-w-[88%] flex-wrap justify-end gap-1.5">
+            {attachments.map((a) => (
+              <li key={a.id}>
+                <ChatImage agentId={agentId} attachment={a} />
+              </li>
+            ))}
+          </ul>
+        )}
+        {m.text && (
+          <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-tr-sm bg-white/[0.06] px-3.5 py-2.5 text-body leading-[1.6] text-ink">
+            {m.text}
+          </div>
+        )}
       </div>
     )
   }
@@ -328,10 +504,11 @@ const MessageView = memo(function MessageView({ message: m, providerName, provid
         <ProviderMark provider={provider} size={20} />
       </div>
       <div className="min-w-0 flex-1">
-        <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-faint">
-          {providerName} <span className="ml-1 font-mono normal-case tracking-normal text-faint/80">{clock(m.at)}</span>
+        <span className="text-label text-faint">
+          <span className="font-medium text-muted">{providerName}</span>
+          <span className="ml-1.5 font-mono tabular-nums">{clock(m.at)}</span>
         </span>
-        <div className="mt-1 break-words text-[13px] leading-relaxed text-ink/90">
+        <div className="mt-1 break-words text-body leading-[1.6] text-ink/90">
           {m.text ? <Markdownish text={m.text} /> : m.streaming ? null : <span className="text-faint">No reply text.</span>}
           {m.streaming && (
             <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-0.5 animate-pulse bg-ink/70 align-middle motion-reduce:animate-none" aria-hidden="true" />
@@ -342,9 +519,46 @@ const MessageView = memo(function MessageView({ message: m, providerName, provid
   )
 })
 
+/** Loaded chat images, keyed by agent and attachment. Bounded, so a long session cannot grow without limit. */
+const attachmentCache = new Map<string, string>()
+const ATTACHMENT_CACHE_MAX = 40
+
+/** A picture in a sent message. Its pixels come from the backend once, then are reused. */
+function ChatImage({ agentId, attachment }: { agentId: string; attachment: Attachment }) {
+  const key = `${agentId}:${attachment.id}`
+  const [src, setSrc] = useState<string | null>(() => attachmentCache.get(key) ?? null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    if (src) return
+    let live = true
+    void attachmentImage(agentId, attachment.id).then((url) => {
+      if (!live) return
+      if (url) {
+        if (attachmentCache.size >= ATTACHMENT_CACHE_MAX) attachmentCache.delete(attachmentCache.keys().next().value as string)
+        attachmentCache.set(key, url)
+        setSrc(url)
+      } else {
+        setFailed(true)
+      }
+    })
+    return () => {
+      live = false
+    }
+  }, [agentId, attachment.id, key, src])
+
+  if (failed) {
+    return <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-line px-2 text-center text-label text-faint">Image unavailable</div>
+  }
+  if (!src) {
+    return <div role="status" aria-label={`Loading ${attachment.name}`} className="h-24 w-24 animate-pulse rounded-lg border border-line bg-white/[0.04] motion-reduce:animate-none" />
+  }
+  return <img src={src} alt={attachment.name} title={attachment.name} className="max-h-48 max-w-[16rem] rounded-lg border border-line object-contain" />
+}
+
 function Thinking({ name }: { name: string }) {
   return (
-    <div className="flex items-center gap-2.5 text-[12px] text-muted" role="status">
+    <div className="flex items-center gap-2.5 text-caption text-muted" role="status">
       <span className="flex gap-1" aria-hidden="true">
         {[0, 1, 2].map((i) => (
           <span
@@ -360,38 +574,84 @@ function Thinking({ name }: { name: string }) {
 }
 
 /**
- * Renders the two things agent replies actually use: fenced code blocks and inline code.
- * Everything else is plain text. Nothing is parsed as HTML, so a reply cannot inject markup.
+ * Renders the Markdown subset agent replies use (see lib/markdown.ts). Everything becomes React
+ * elements, never HTML, so a reply cannot inject markup.
  */
 const Markdownish = memo(function Markdownish({ text }: { text: string }) {
-  const parts = text.split(/(```[\s\S]*?(?:```|$))/g)
+  const blocks = useMemo(() => parseBlocks(text), [text])
   return (
-    <>
-      {parts.map((part, i) => {
-        if (part.startsWith('```')) {
-          const body = part.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '')
-          return (
-            <pre key={i} className="my-2 max-h-72 overflow-auto whitespace-pre rounded-lg border border-line bg-canvas p-3 font-mono text-[11.5px] leading-relaxed text-ink/85">
-              {body}
-            </pre>
-          )
-        }
-        return <Fragment key={i}>{renderInline(part)}</Fragment>
-      })}
-    </>
+    <div className="space-y-2.5">
+      {blocks.map((b, i) => (
+        <BlockView key={i} block={b} />
+      ))}
+    </div>
   )
 })
 
-function renderInline(text: string): ReactNode[] {
-  return text.split(/(`[^`\n]+`)/g).map((chunk, i) =>
-    chunk.length > 2 && chunk.startsWith('`') && chunk.endsWith('`') ? (
-      <code key={i} className="rounded bg-white/[0.07] px-1 py-px font-mono text-[12px] text-ink">
-        {chunk.slice(1, -1)}
-      </code>
-    ) : (
-      <Fragment key={i}>{chunk}</Fragment>
-    ),
-  )
+function BlockView({ block: b }: { block: Block }) {
+  switch (b.kind) {
+    case 'heading': {
+      const cls = b.level === 1 ? 'text-title font-semibold' : 'text-body font-semibold'
+      return <p className={`${cls} pt-1 text-ink`}>{inline(b.text)}</p>
+    }
+    case 'list': {
+      const Tag = b.ordered ? 'ol' : 'ul'
+      return (
+        <Tag className={`space-y-1.5 pl-4 marker:text-faint ${b.ordered ? 'list-decimal' : 'list-disc'}`}>
+          {b.items.map((item, i) => (
+            <li key={i} className="pl-1 leading-relaxed">
+              {inline(item)}
+            </li>
+          ))}
+        </Tag>
+      )
+    }
+    case 'quote':
+      return <blockquote className="border-l-2 border-line pl-3 text-muted">{b.lines.map((l, i) => <p key={i}>{inline(l)}</p>)}</blockquote>
+    case 'code':
+      return (
+        <div>
+          {b.lang && <div className="mb-1 font-mono text-label uppercase tracking-[0.1em] text-faint">{b.lang}</div>}
+          <pre className="max-h-72 overflow-auto whitespace-pre rounded-lg border border-line bg-canvas p-3 font-mono text-caption leading-relaxed text-ink/85">
+            {b.text}
+          </pre>
+        </div>
+      )
+    case 'paragraph':
+      return (
+        <p className="leading-relaxed">
+          {b.lines.map((line, i) => (
+            <Fragment key={i}>
+              {i > 0 && <br />}
+              {inline(line)}
+            </Fragment>
+          ))}
+        </p>
+      )
+  }
+}
+
+function inline(text: string): ReactNode[] {
+  return parseInline(text).map((run, i) => {
+    switch (run.kind) {
+      case 'code':
+        return (
+          <code key={i} className="rounded bg-white/[0.07] px-1 py-px font-mono text-caption text-ink">
+            {run.text}
+          </code>
+        )
+      case 'bold':
+        return (
+          <strong key={i} className="font-semibold text-ink">
+            {run.text}
+          </strong>
+        )
+      case 'italic':
+        return <em key={i}>{run.text}</em>
+      default:
+        return <Fragment key={i}>{run.text}</Fragment>
+    }
+  })
 }
 
 // ---- tool calls ----------------------------------------------------------------------------
@@ -402,32 +662,65 @@ const TOOL_TONE: Record<ToolCall['status'], { label: string; color: string }> = 
   error: { label: 'Failed', color: STATUS_COLOR.failed },
 }
 
-/** A tool call in the conversation. Collapsed to one line; expands to its input and result. */
+/** One glyph per tool kind, so a glance at the chat shows whether the agent read, edited, ran or searched. */
+const TOOL_GLYPH: Record<ToolKind, (p: { size?: number }) => ReactNode> = {
+  read: IconFileRead,
+  write: IconFileWrite,
+  edit: (p) => <IconPencil size={p.size} />,
+  shell: IconTerminal,
+  search: IconSearch,
+  web: IconGlobe,
+  agent: IconAgent,
+  mcp: IconPlug,
+  other: IconTool,
+}
+
+/** Status glyph: spinner while running, check when done, cross when failed. */
+function ToolStatusIcon({ status, color }: { status: ToolCall['status']; color: string }) {
+  if (status === 'running') {
+    return (
+      <span
+        className="inline-block h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none"
+        style={{ color }}
+        aria-hidden="true"
+      />
+    )
+  }
+  if (status === 'error') return <IconX size={12} aria-hidden="true" />
+  return <IconCheck size={12} aria-hidden="true" />
+}
+
+/**
+ * A tool call in the conversation. One quiet line by default. Completed calls show only a faint check,
+ * while running and failed calls keep their label. Expanding shows the input and result.
+ */
 const ToolRow = memo(function ToolRow({ tool: t }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false)
   const tone = TOOL_TONE[t.status] ?? TOOL_TONE.running
+  const Glyph = TOOL_GLYPH[toolKind(t.name)]
   const id = `tool-${t.id}`
+  const done = t.status === 'ok'
   return (
-    <div className={`rounded-lg border bg-surface/50 ${t.status === 'error' ? 'border-danger/25' : 'border-line'}`}>
+    <div className={`rounded-md ${t.status === 'error' ? 'bg-danger/[0.06]' : ''}`}>
       <button
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={id}
-        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors duration-150 hover:bg-white/[0.03]"
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-caption transition-colors duration-150 hover:bg-white/[0.04]"
       >
-        <span className="text-faint">{open ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}</span>
-        <span className="text-faint">
-          <IconTool size={12} />
+        <IconChevronRight size={11} className={`shrink-0 text-faint transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
+        <span className={`shrink-0 ${done ? 'text-faint' : 'text-muted'}`}>
+          <Glyph size={12} />
         </span>
-        <span className="shrink-0 font-mono text-[11px] font-medium text-ink">{t.name || 'Tool'}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">{t.summary}</span>
-        <span className="flex shrink-0 items-center gap-1.5 text-[11px]" style={{ color: tone.color }}>
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.color }} />
-          {tone.label}
+        <span className={`shrink-0 font-mono text-caption ${done ? 'text-muted' : 'text-ink'}`}>{t.name || 'Tool'}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-caption text-faint">{t.summary}</span>
+        <span className={`flex shrink-0 items-center gap-1.5 text-label ${done ? 'text-faint' : ''}`} style={done ? undefined : { color: tone.color }}>
+          <ToolStatusIcon status={t.status} color={done ? 'currentColor' : tone.color} />
+          {done ? <span className="sr-only">{tone.label}</span> : tone.label}
         </span>
       </button>
       {open && (
-        <div id={id} className="space-y-2.5 border-t border-line px-3 py-2.5">
+        <div id={id} className="ml-[26px] mb-1 mt-0.5 space-y-2.5 pr-2">
           <CodeBlock label="Input" text={t.input} />
           <CodeBlock label="Result" text={t.output} placeholder={t.status === 'running' ? 'Waiting for result…' : 'No output'} danger={t.status === 'error'} />
         </div>
@@ -435,6 +728,83 @@ const ToolRow = memo(function ToolRow({ tool: t }: { tool: ToolCall }) {
     </div>
   )
 })
+
+/** Words for a summary, per tool kind: [singular, plural]. */
+const KIND_WORDS: Record<ToolKind, [string, string]> = {
+  read: ['file read', 'files read'],
+  write: ['file written', 'files written'],
+  edit: ['edit', 'edits'],
+  shell: ['command', 'commands'],
+  search: ['search', 'searches'],
+  web: ['web request', 'web requests'],
+  agent: ['agent call', 'agent calls'],
+  mcp: ['tool call', 'tool calls'],
+  other: ['tool call', 'tool calls'],
+}
+
+/** "Completed 3 files read · 2 commands", so a collapsed run still says what happened. */
+function summarizeTools(tools: ToolCall[]): string {
+  const counts = new Map<ToolKind, number>()
+  for (const t of tools) {
+    const k = toolKind(t.name)
+    counts.set(k, (counts.get(k) ?? 0) + 1)
+  }
+  const parts = [...counts.entries()].map(([k, n]) => `${n} ${n === 1 ? KIND_WORDS[k][0] : KIND_WORDS[k][1]}`)
+  return `Completed ${parts.join(' · ')}`
+}
+
+/** A run of completed tool calls, collapsed behind one line. Expands to the individual rows. */
+const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolCall[] }) {
+  const [open, setOpen] = useState(false)
+  const id = `tools-${tools[0].id}`
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={id}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-caption text-muted transition-colors duration-150 hover:bg-white/[0.04] hover:text-ink"
+      >
+        <IconChevronRight size={11} className={`shrink-0 text-faint transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
+        <span className="min-w-0 flex-1 truncate">{summarizeTools(tools)}</span>
+        <IconCheck size={11} aria-hidden="true" className="shrink-0 text-faint" />
+      </button>
+      {open && (
+        <div id={id} className="ml-[11px] mt-0.5 space-y-0.5 border-l border-line pl-1.5">
+          {tools.map((t) => (
+            <ToolRow key={t.id} tool={t} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+})
+
+type RenderUnit = { key: string; kind: 'item'; item: TimelineItem } | { key: string; kind: 'group'; tools: ToolCall[] }
+
+/**
+ * Collapses each run of two or more completed tool calls into one group. Anything else passes
+ * through unchanged, so running, failed, and messages are never hidden.
+ */
+function groupRuns(items: TimelineItem[]): RenderUnit[] {
+  const out: RenderUnit[] = []
+  let run: Extract<TimelineItem, { kind: 'tool' }>[] = []
+  const flush = () => {
+    if (run.length >= 2) out.push({ key: `g:${run[0].tool.id}`, kind: 'group', tools: run.map((r) => r.tool) })
+    else for (const r of run) out.push({ key: r.key, kind: 'item', item: r })
+    run = []
+  }
+  for (const it of items) {
+    if (it.kind === 'tool' && it.tool.status === 'ok') {
+      run.push(it)
+      continue
+    }
+    flush()
+    out.push({ key: it.key, kind: 'item', item: it })
+  }
+  flush()
+  return out
+}
 
 /** Labelled, monospace block with a copy action. Shared by the chat tool rows and the Tools tab. */
 export function CodeBlock({ label, text, placeholder = 'Empty', danger = false }: { label: string; text: string; placeholder?: string; danger?: boolean }) {
@@ -450,16 +820,16 @@ export function CodeBlock({ label, text, placeholder = 'Empty', danger = false }
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">{label}</span>
+        <span className="text-label font-medium text-faint">{label}</span>
         {value && (
-          <button onClick={() => void copy()} aria-label={`Copy ${label.toLowerCase()}`} className="flex items-center gap-1 rounded px-1 py-0.5 text-[10.5px] text-faint transition-colors hover:text-ink">
+          <button onClick={() => void copy()} aria-label={`Copy ${label.toLowerCase()}`} className="flex items-center gap-1 rounded px-1 py-0.5 text-label text-faint transition-colors hover:text-ink">
             <IconCopy size={11} />
             Copy
           </button>
         )}
       </div>
       <pre
-        className={`max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-canvas p-2.5 font-mono text-[11px] leading-relaxed ${
+        className={`max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-canvas p-2.5 font-mono text-label leading-relaxed ${
           danger ? 'text-danger-soft' : 'text-ink/80'
         }`}
       >
@@ -487,8 +857,8 @@ function ChatSkeleton() {
 function LoadError({ agentId, message }: { agentId: string; message: string }) {
   return (
     <div className="flex min-h-[200px] flex-col items-center justify-center text-center">
-      <p className="text-[13px] font-medium text-ink/85">Couldn’t load this conversation</p>
-      <p className="mt-1 max-w-[280px] text-[12px] leading-relaxed text-faint">{message}</p>
+      <p className="text-body font-medium text-ink/85">Couldn’t load this conversation</p>
+      <p className="mt-1 max-w-[280px] text-caption leading-relaxed text-faint">{message}</p>
       <Button variant="secondary" size="sm" className="mt-4" onClick={() => void loadDetail(agentId)}>
         <IconRetry size={12} />
         Try again

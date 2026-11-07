@@ -2,12 +2,15 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
+	"orbit/internal/browser"
 	"orbit/internal/model"
 )
 
@@ -41,6 +44,7 @@ func (Claude) Capabilities() model.Capabilities {
 			{ID: "acceptEdits", Label: "Auto-accept edits", Description: "Edits files without asking. Shell commands still need approval."},
 			{ID: "plan", Label: "Plan only", Description: "Reads and plans, never changes files."},
 			{ID: "default", Label: "Ask first", Description: "Unapproved tools are denied in headless mode and reported as waiting."},
+			{ID: "bypassPermissions", Label: "Full access", Description: "Runs every tool without asking, including shell commands. Use only in repos you trust."},
 		},
 		Models: claudeModels,
 	}
@@ -52,7 +56,53 @@ func (c Claude) Run(ctx context.Context, spec Spec, emit func(Update)) error {
 	if !d.Available {
 		return errors.New("Claude Code is not installed or not on PATH")
 	}
+	args := claudeArgs(spec)
+	stdin, err := claudeStdin(spec)
+	if err != nil {
+		return err
+	}
+	parser := newClaudeParser()
+	return runProcess(ctx, procSpec{Bin: d.Path, Args: args, Dir: spec.RepoPath, Stdin: stdin}, parser.parse, emit)
+}
+
+// claudeStdin is what the CLI reads for one turn. A text-only turn sends the prompt as plain
+// text. A turn with images sends one stream-json user message: the text, then each image as base64.
+func claudeStdin(spec Spec) (string, error) {
+	if len(spec.Images) == 0 {
+		return spec.Prompt, nil
+	}
+	content := []map[string]any{{"type": "text", "text": spec.Prompt}}
+	for _, img := range spec.Images {
+		data, err := os.ReadFile(img.Path)
+		if err != nil {
+			return "", fmt.Errorf("read attached image: %w", err)
+		}
+		content = append(content, map[string]any{
+			"type": "image",
+			"source": map[string]any{
+				"type":       "base64",
+				"media_type": img.MediaType,
+				"data":       base64.StdEncoding.EncodeToString(data),
+			},
+		})
+	}
+	line, err := json.Marshal(map[string]any{
+		"type":    "user",
+		"message": map[string]any{"role": "user", "content": content},
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(line) + "\n", nil
+}
+
+// claudeArgs builds the Claude Code command line for one turn.
+func claudeArgs(spec Spec) []string {
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
+	if len(spec.Images) > 0 {
+		// Images travel inside the stdin message, so stdin must be stream-json too.
+		args = append(args, "--input-format", "stream-json")
+	}
 	if spec.SessionID != "" {
 		if spec.Resume {
 			args = append(args, "--resume", spec.SessionID)
@@ -68,8 +118,21 @@ func (c Claude) Run(ctx context.Context, spec Spec, emit func(Update)) error {
 	if spec.Model != "" {
 		args = append(args, "--model", spec.Model)
 	}
-	parser := newClaudeParser()
-	return runProcess(ctx, procSpec{Bin: d.Path, Args: args, Dir: spec.RepoPath, Stdin: spec.Prompt}, parser.parse, emit)
+	// Effort and fast mode do not persist across sessions, so they are sent on every turn.
+	if spec.Effort != "" {
+		args = append(args, "--effort", spec.Effort)
+	}
+	if spec.FastMode {
+		args = append(args, "--fast-mode", "on")
+	}
+	if spec.BrowserCommand != "" {
+		// --mcp-config takes a list, so it goes before a flag that starts with "--".
+		cfg, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
+			browserServerName: map[string]any{"command": spec.BrowserCommand, "args": []string{browser.MCPFlag}},
+		}})
+		args = append(args, "--mcp-config", string(cfg), "--allowedTools", "mcp__"+browserServerName+"__"+browser.ToolName)
+	}
+	return args
 }
 
 // ---- wire format ----------------------------------------------------------
@@ -78,6 +141,8 @@ type claudeEnvelope struct {
 	Type           string          `json:"type"`
 	Subtype        string          `json:"subtype"`
 	SessionID      string          `json:"session_id"`
+	// ParentToolUseID is set on messages a sub-agent produced: it names the Task call that started it.
+	ParentToolUseID string         `json:"parent_tool_use_id"`
 	APIMessageID   string          `json:"api_message_id"`
 	Model          string          `json:"model"`
 	Event          json.RawMessage `json:"event"`
@@ -136,6 +201,7 @@ type claudeToolInfo struct {
 
 type claudeParser struct {
 	tools       map[string]claudeToolInfo
+	subs        map[string]bool // Task call ids that started a sub-agent and have not ended
 	streamed    map[string]bool // stream message id (api id + block index) -> started
 	streamedMsg map[string]bool // api message id -> has streamed text
 }
@@ -143,6 +209,7 @@ type claudeParser struct {
 func newClaudeParser() *claudeParser {
 	return &claudeParser{
 		tools:       map[string]claudeToolInfo{},
+		subs:        map[string]bool{},
 		streamed:    map[string]bool{},
 		streamedMsg: map[string]bool{},
 	}
@@ -152,6 +219,10 @@ func (p *claudeParser) parse(line []byte) []Update {
 	var env claudeEnvelope
 	if err := json.Unmarshal(line, &env); err != nil {
 		return nil
+	}
+	if env.ParentToolUseID != "" {
+		// A sub-agent's messages stay out of the main chat. Only its tool use shows, as activity.
+		return p.subAgent(env)
 	}
 	switch env.Type {
 	case "system":
@@ -236,6 +307,28 @@ func (p *claudeParser) assistant(env claudeEnvelope) []Update {
 	return out
 }
 
+// subAgent handles a message a sub-agent produced. Its tool uses become activity on the Task call
+// that started it; its text and streamed output are not shown in the main chat.
+func (p *claudeParser) subAgent(env claudeEnvelope) []Update {
+	if env.Type != "assistant" {
+		return nil
+	}
+	var msg claudeMessage
+	if err := json.Unmarshal(env.Message, &msg); err != nil {
+		return nil
+	}
+	var out []Update
+	for _, b := range msg.Content {
+		if b.Type != "tool_use" {
+			continue
+		}
+		input := map[string]any{}
+		_ = json.Unmarshal(b.Input, &input)
+		out = append(out, Update{Kind: UpdSubAgentActivity, ID: env.ParentToolUseID, Detail: claudeSummary(b.Name, input)})
+	}
+	return out
+}
+
 func (p *claudeParser) toolUse(b claudeBlock) []Update {
 	input := map[string]any{}
 	_ = json.Unmarshal(b.Input, &input)
@@ -250,6 +343,11 @@ func (p *claudeParser) toolUse(b claudeBlock) []Update {
 	out := []Update{
 		{Kind: UpdStatus, Status: status, Detail: detail},
 		{Kind: UpdToolStart, Tool: &tool},
+	}
+	if b.Name == "Task" {
+		p.subs[b.ID] = true
+		kind, _ := input["subagent_type"].(string)
+		out = append(out, Update{Kind: UpdSubAgentStart, ID: b.ID, Text: claudeSummary(b.Name, input), Detail: kind})
 	}
 	if path, op, diff, ok := claudeFileTouch(b.Name, input); ok {
 		p.tools[b.ID] = claudeToolInfo{name: b.Name, path: path, op: op}
@@ -269,6 +367,10 @@ func (p *claudeParser) user(env claudeEnvelope) []Update {
 			continue
 		}
 		out = append(out, Update{Kind: UpdToolEnd, ToolID: b.ToolUseID, Output: claudeText(b.Content), Failed: b.IsError})
+		if p.subs[b.ToolUseID] {
+			delete(p.subs, b.ToolUseID)
+			out = append(out, Update{Kind: UpdSubAgentEnd, ID: b.ToolUseID, Failed: b.IsError})
+		}
 		if info, ok := p.tools[b.ToolUseID]; ok {
 			delete(p.tools, b.ToolUseID)
 			out = append(out, Update{Kind: UpdFile, File: &FileTouch{Path: info.path, Op: info.op, Tool: info.name, Phase: "end"}})
@@ -360,9 +462,14 @@ func claudeSummary(name string, in map[string]any) string {
 		return claudeStr(in, "query")
 	case "Task":
 		return claudeStr(in, "description")
+	case browseToolName:
+		return claudeStr(in, "url")
 	}
 	return name
 }
+
+// browseToolName is the name Claude Code gives the Orbit browser tool.
+const browseToolName = "mcp__" + browserServerName + "__" + browser.ToolName
 
 func claudeStatus(name string, in map[string]any) (model.Status, string) {
 	switch name {
@@ -372,6 +479,8 @@ func claudeStatus(name string, in map[string]any) (model.Status, string) {
 		return model.StatusWriting, "Editing " + filepath.Base(claudeSummary(name, in))
 	case "Glob", "Grep", "LS", "WebFetch", "WebSearch":
 		return model.StatusReading, "Searching"
+	case browseToolName:
+		return model.StatusReading, "Browsing " + claudeStr(in, "url")
 	}
 	return model.StatusThinking, "Running " + name
 }

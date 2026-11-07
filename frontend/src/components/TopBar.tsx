@@ -1,5 +1,5 @@
 import { useStore, openDialog, setState } from '../lib/store'
-import { Button, IconGrid, IconKeyboard, IconPlus, IconSidebar, Kbd } from './ui'
+import { Button, IconGlobe, IconGrid, IconKeyboard, IconPlus, IconSettings, IconSidebar, Kbd } from './ui'
 import { Tooltip } from './navigation/Tooltip'
 
 /** Top bar: brand, a live summary, and the global actions. Labels fold into icons on narrow windows. */
@@ -20,27 +20,30 @@ export function TopBar() {
   const live = running > 0
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-canvas/80 px-4 backdrop-blur-md">
-      <Tooltip label={projectsOpen ? 'Hide projects' : 'Show projects'} shortcut="[" align="start">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setState((s) => ({ projectsOpen: !s.projectsOpen }))}
-          aria-label={projectsOpen ? 'Hide projects' : 'Show projects'}
-          aria-pressed={projectsOpen}
-          className="h-8 w-8 px-0"
-        >
-          <IconSidebar size={16} />
-        </Button>
-      </Tooltip>
+    // Three columns: the two sides take equal space, so the summary sits at the true centre of the bar.
+    <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-line bg-canvas/80 px-4 backdrop-blur-md">
+      <div className="flex min-w-0 items-center gap-3 justify-self-start">
+        <Tooltip label={projectsOpen ? 'Hide projects' : 'Show projects'} shortcut="[" align="start">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setState((s) => ({ projectsOpen: !s.projectsOpen }))}
+            aria-label={projectsOpen ? 'Hide projects' : 'Show projects'}
+            aria-pressed={projectsOpen}
+            className="h-8 w-8 px-0"
+          >
+            <IconSidebar size={16} />
+          </Button>
+        </Tooltip>
 
-      <div className="flex shrink-0 items-center gap-2.5 pl-1">
-        <OrbitMark />
-        <span className="text-[14px] font-semibold tracking-[-0.01em] text-ink max-[760px]:sr-only">Orbit</span>
+        <div className="flex shrink-0 items-center gap-2.5 pl-1">
+          <OrbitMark />
+          <span className="text-title font-semibold tracking-[-0.01em] text-ink max-[760px]:sr-only">Orbit</span>
+        </div>
       </div>
 
-      <div className="flex min-w-0 flex-1 justify-center" aria-live="polite">
-        <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-line bg-white/[0.03] px-3 py-1 text-[12px] tabular-nums text-muted">
+      <div className="flex min-w-0 max-w-full justify-center" aria-live="polite">
+        <div className="inline-flex max-w-full items-center gap-2 rounded-full bg-surface px-3 py-1 text-caption tabular-nums text-muted">
           <span className="relative flex h-1.5 w-1.5 shrink-0">
             {live && <span className="absolute inset-0 animate-ping rounded-full bg-status-thinking/60 motion-reduce:animate-none" />}
             <span className="relative h-1.5 w-1.5 rounded-full" style={{ background: live ? 'var(--color-status-thinking)' : 'var(--color-faint)' }} />
@@ -49,7 +52,7 @@ export function TopBar() {
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex min-w-0 items-center gap-1.5 justify-self-end">
         <Tooltip label="Dashboard" shortcut="D" align="end">
           <Button
             variant="ghost"
@@ -57,10 +60,22 @@ export function TopBar() {
             onClick={() => setState((s) => ({ dashboardOpen: !s.dashboardOpen }))}
             aria-pressed={dashboardOpen}
             aria-label="Toggle dashboard"
-            className={`text-muted ${dashboardOpen ? 'bg-white/[0.06] text-ink' : ''}`}
+            className={`text-muted ${dashboardOpen ? 'bg-row-active text-ink' : ''}`}
           >
             <IconGrid size={14} />
             <span className="max-[1000px]:sr-only">Dashboard</span>
+          </Button>
+        </Tooltip>
+        <Tooltip label="Browser" shortcut="B" align="end">
+          <Button variant="ghost" size="sm" onClick={() => openDialog({ kind: 'browser' })} aria-label="Browser" className="text-muted">
+            <IconGlobe size={14} />
+            <span className="max-[1000px]:sr-only">Browser</span>
+          </Button>
+        </Tooltip>
+        <Tooltip label="Settings" shortcut="," align="end">
+          <Button variant="ghost" size="sm" onClick={() => openDialog({ kind: 'settings' })} aria-label="Settings" className="text-muted">
+            <IconSettings size={14} />
+            <span className="max-[1000px]:sr-only">Settings</span>
           </Button>
         </Tooltip>
         <Tooltip label="Keyboard shortcuts" shortcut="?" align="end">

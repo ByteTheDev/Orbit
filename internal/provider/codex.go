@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"orbit/internal/browser"
 	"orbit/internal/model"
 )
 
@@ -40,6 +41,7 @@ func (Codex) Capabilities() model.Capabilities {
 		PermissionModes: []model.PermissionMode{
 			{ID: "workspace-write", Label: "Workspace write", Description: "Can edit files inside the repository."},
 			{ID: "read-only", Label: "Read only", Description: "Can read the repository but not change it."},
+			{ID: "danger-full-access", Label: "Full access", Description: "No sandbox. Can edit files and run any command, including outside the repository."},
 		},
 		Models: codexModels,
 	}
@@ -51,26 +53,73 @@ func (c Codex) Run(ctx context.Context, spec Spec, emit func(Update)) error {
 	if !d.Available {
 		return errors.New("Codex CLI is not installed or not on PATH")
 	}
-	var args []string
-	if spec.Resume && spec.SessionID != "" {
-		args = []string{"exec", "resume", "--json", "--skip-git-repo-check"}
-		if spec.Model != "" {
-			args = append(args, "-m", spec.Model)
-		}
-		args = append(args, spec.SessionID, "-")
-	} else {
-		sandbox := spec.PermissionMode
-		if sandbox == "" {
-			sandbox = "workspace-write"
-		}
-		args = []string{"exec", "--json", "--skip-git-repo-check", "-s", sandbox}
-		if spec.Model != "" {
-			args = append(args, "-m", spec.Model)
-		}
-		args = append(args, "-")
-	}
 	parser := &codexParser{}
-	return runProcess(ctx, procSpec{Bin: d.Path, Args: args, Dir: spec.RepoPath, Stdin: spec.Prompt}, parser.parse, emit)
+	return runProcess(ctx, procSpec{Bin: d.Path, Args: codexArgs(spec), Dir: spec.RepoPath, Stdin: spec.Prompt}, parser.parse, emit)
+}
+
+// codexArgs builds the Codex command line for one turn.
+func codexArgs(spec Spec) []string {
+	if spec.Resume && spec.SessionID != "" {
+		args := []string{"exec", "resume", "--json", "--skip-git-repo-check"}
+		if spec.Model != "" {
+			args = append(args, "-m", spec.Model)
+		}
+		args = appendCodexEffort(appendCodexFast(args, spec), spec)
+		args = appendCodexImages(appendCodexBrowser(args, spec), spec)
+		return append(args, spec.SessionID, "-")
+	}
+	sandbox := spec.PermissionMode
+	if sandbox == "" {
+		sandbox = "workspace-write"
+	}
+	args := []string{"exec", "--json", "--skip-git-repo-check", "-s", sandbox}
+	if spec.Model != "" {
+		args = append(args, "-m", spec.Model)
+	}
+	args = appendCodexEffort(appendCodexFast(args, spec), spec)
+	args = appendCodexImages(appendCodexBrowser(args, spec), spec)
+	return append(args, "-")
+}
+
+// appendCodexBrowser registers the Orbit browser as an MCP server for this run only. The values
+// are TOML, so the command path is quoted and its backslashes escaped.
+func appendCodexBrowser(args []string, spec Spec) []string {
+	if spec.BrowserCommand == "" {
+		return args
+	}
+	args = append(args, "-c", "mcp_servers."+browserServerName+".command="+tomlString(spec.BrowserCommand))
+	return append(args, "-c", "mcp_servers."+browserServerName+`.args=["`+browser.MCPFlag+`"]`)
+}
+
+// tomlString quotes s as a TOML basic string.
+func tomlString(s string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+}
+
+// appendCodexImages attaches each image with its own --image=<path> flag. The = form keeps a
+// path from being read as the prompt marker "-" that follows.
+func appendCodexImages(args []string, spec Spec) []string {
+	for _, img := range spec.Images {
+		args = append(args, "--image="+img.Path)
+	}
+	return args
+}
+
+// appendCodexEffort sets the reasoning effort for this run. The value is TOML, hence the quotes.
+func appendCodexEffort(args []string, spec Spec) []string {
+	if spec.Effort != "" {
+		args = append(args, "-c", `model_reasoning_effort="`+spec.Effort+`"`)
+	}
+	return args
+}
+
+// appendCodexFast asks Codex for its fast service tier on this turn only. It is a
+// per-run config override, so the user's config.toml is not changed.
+func appendCodexFast(args []string, spec Spec) []string {
+	if spec.FastMode {
+		args = append(args, "-c", `service_tier="fast"`)
+	}
+	return args
 }
 
 // ---- wire format ----------------------------------------------------------
@@ -104,6 +153,13 @@ type codexItem struct {
 		Path string `json:"path"`
 		Kind string `json:"kind"`
 	} `json:"changes"`
+	// Collaboration (sub-agent) items: Tool is spawn_agent, send_input, wait or close_agent.
+	Prompt            string   `json:"prompt"`
+	ReceiverThreadIDs []string `json:"receiver_thread_ids"`
+	AgentsStates      map[string]struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	} `json:"agents_states"`
 }
 
 type codexParser struct{}
@@ -215,12 +271,47 @@ func (p *codexParser) item(eventType string, it *codexItem) []Update {
 			}
 		}
 		return []Update{{Kind: UpdToolEnd, ToolID: it.ID, Output: "Search finished"}}
+	case "collab_tool_call", "collab_agent_tool_call":
+		return codexCollab(completed, it)
 	case "error":
 		if completed && it.Message != "" {
 			return []Update{{Kind: UpdIssue, Level: "error", Text: it.Message}}
 		}
 	}
 	return nil
+}
+
+// codexCollab turns Codex's multi-agent calls into sub-agent updates. A completed spawn_agent
+// starts one sub-agent per child thread it created. Each child's reported state then updates it:
+// pending or running is activity, completed ends it, and errored or not_found ends it as failed.
+// The call's own tool rows are not shown, so the sub-agent icon is the only trace of it.
+func codexCollab(completed bool, it *codexItem) []Update {
+	var out []Update
+	if it.Tool == "spawn_agent" && completed {
+		text := firstWords(it.Prompt, 12)
+		for _, id := range it.ReceiverThreadIDs {
+			out = append(out, Update{Kind: UpdSubAgentStart, ID: id, Text: text, Detail: "agent"})
+		}
+	}
+	for _, id := range it.ReceiverThreadIDs {
+		st, ok := it.AgentsStates[id]
+		if !ok {
+			continue
+		}
+		switch st.Status {
+		case "pending_init", "running":
+			detail := "Working"
+			if st.Message != "" {
+				detail = st.Message
+			}
+			out = append(out, Update{Kind: UpdSubAgentActivity, ID: id, Detail: detail})
+		case "completed", "interrupted", "shutdown":
+			out = append(out, Update{Kind: UpdSubAgentEnd, ID: id})
+		case "errored", "not_found":
+			out = append(out, Update{Kind: UpdSubAgentEnd, ID: id, Failed: true})
+		}
+	}
+	return out
 }
 
 func codexErrorText(raw json.RawMessage) string {

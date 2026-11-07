@@ -9,7 +9,8 @@ export interface Camera {
   zoom: number
 }
 
-export const MIN_ZOOM = 0.12
+/** Low enough that a galaxy of a dozen or more projects still fits on screen. */
+export const MIN_ZOOM = 0.04
 export const MAX_ZOOM = 2.6
 
 export function clampZoom(z: number): number {

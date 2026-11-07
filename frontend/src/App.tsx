@@ -3,6 +3,7 @@ import { ContextMenu, type MenuItem } from './components/ContextMenu'
 import { Dashboard } from './components/dashboard/Dashboard'
 import { Dialogs } from './components/dialogs/Dialogs'
 import { Inspector } from './components/inspector/Inspector'
+import { UsageBar } from './components/UsageBar'
 import { ProjectsPanel } from './components/ProjectsPanel'
 import { Toasts } from './components/Toasts'
 import { TopBar } from './components/TopBar'
@@ -20,6 +21,7 @@ import {
   selectAgent,
   setInspectorTab,
   setState,
+  setSystemReducedMotion,
   useStore,
 } from './lib/store'
 import type { OrbitEvent } from './types'
@@ -73,7 +75,7 @@ export default function App() {
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const onChange = () => setState({ reducedMotion: mq.matches })
+    const onChange = () => setSystemReducedMotion(mq.matches)
     mq.addEventListener('change', onChange)
     return () => mq.removeEventListener('change', onChange)
   }, [])
@@ -102,6 +104,9 @@ export default function App() {
         if (s.inspectorOpen) {
           selectAgent(null)
           e.preventDefault()
+        } else if (universeRef.current?.returnToGalaxy()) {
+          // Esc leaves a focused solar system for the whole galaxy.
+          e.preventDefault()
         }
         return
       }
@@ -111,6 +116,10 @@ export default function App() {
         e.preventDefault()
         fn()
       }
+
+      // Settings can turn off single-key shortcuts. Alt+arrows stay on, since they rarely collide with typing.
+      const singleKeys = s.settings.singleKeyShortcuts
+      if (!singleKeys && !(e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown'))) return
 
       if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         const list = s.agentOrder
@@ -133,11 +142,16 @@ export default function App() {
           return handled(() => openDialog({ kind: 'project' }))
         case '?':
           return handled(() => openDialog({ kind: 'shortcuts' }))
+        case ',':
+          return handled(() => openDialog({ kind: 'settings' }))
         case '[':
           return handled(() => setState((x) => ({ projectsOpen: !x.projectsOpen })))
         case 'd':
         case 'D':
           return handled(() => setState((x) => ({ dashboardOpen: !x.dashboardOpen })))
+        case 'b':
+        case 'B':
+          return handled(() => openDialog({ kind: 'browser' }))
         case ']':
           return handled(() => {
             if (s.selectedId) setState((x) => ({ inspectorOpen: !x.inspectorOpen }))
@@ -166,7 +180,7 @@ export default function App() {
           return handled(() => uni?.pan(dx, dy))
         }
         default:
-          if (/^[1-6]$/.test(e.key) && s.inspectorOpen) {
+          if (/^[1-6]$/.test(e.key) && Number(e.key) <= TAB_KEYS.length && s.inspectorOpen) {
             return handled(() => setInspectorTab(TAB_KEYS[Number(e.key) - 1]))
           }
       }
@@ -291,6 +305,7 @@ export default function App() {
               universeRef.current?.focusProject(id)
             }}
             onFocusAgent={(id) => universeRef.current?.focusAgent(id)}
+            onOpenAgentMenu={openMenu}
           />
         )}
 
@@ -306,13 +321,6 @@ export default function App() {
             onOpenMenu={openMenu}
             onOpenProjectMenu={openProjectMenu}
             onMovePlanet={(id, x, y) => void moveAgent(id, x, y)}
-            onOpenFiles={(agentId, path) => {
-              if (path) openDialog({ kind: 'file', agentId, path })
-              else {
-                selectAgent(agentId, { openInspector: true })
-                setInspectorTab('files')
-              }
-            }}
           />
 
           {dashboardOpen && <Dashboard />}
@@ -323,7 +331,7 @@ export default function App() {
                 <EmptyState
                   icon={<OrbitIllustration />}
                   title="Create a project to begin"
-                  body="A project is a repository folder. Agents orbit their project’s sun, and the files they touch become moons."
+                  body="A project is a repository folder. Agents orbit their project’s sun, and the commands they run orbit as rocks."
                   action={
                     <Button variant="primary" onClick={() => openDialog({ kind: 'project' })} className="rounded-full px-4">
                       <IconPlus size={13} />
@@ -337,7 +345,7 @@ export default function App() {
 
           {projectList.length > 0 && activeAgentCount === 0 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-8 flex justify-center">
-              <div className={`pointer-events-auto flex items-center gap-5 rounded-2xl py-3 pl-5 pr-3 ${floatingSurface}`}>
+              <div className={`pointer-events-auto flex animate-float-in items-center gap-5 rounded-2xl py-3 pl-5 pr-3 ${floatingSurface}`}>
                 <div className="text-[13px]">
                   <p className="font-semibold text-ink">No agents in {projectsMap[activeProjectId ?? '']?.name ?? 'this project'}</p>
                   <p className="mt-0.5 text-[12px] text-muted">Launch one to see it orbit here.</p>
@@ -378,6 +386,9 @@ export default function App() {
       <Suspense fallback={<div className="h-8 shrink-0 border-t border-line bg-sidebar" aria-hidden="true" />}>
         <TerminalPanel />
       </Suspense>
+
+      {/* Always at the very bottom of the window, below the terminal. */}
+      <UsageBar />
 
       <Dialogs />
       <Toasts />

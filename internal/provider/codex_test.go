@@ -41,6 +41,35 @@ func TestCodexParserMapsItemsAndTurns(t *testing.T) {
 	}
 }
 
+func TestCodexSubAgentsFollowTheirChildren(t *testing.T) {
+	lines := []string{
+		`{"type":"item.started","item":{"id":"s1","type":"collab_tool_call","tool":"spawn_agent","prompt":"Map the auth module","status":"in_progress"}}`,
+		`{"type":"item.completed","item":{"id":"s1","type":"collab_tool_call","tool":"spawn_agent","prompt":"Map the auth module","status":"completed","receiver_thread_ids":["ch1"]}}`,
+		`{"type":"item.updated","item":{"id":"w1","type":"collab_tool_call","tool":"wait","status":"in_progress","receiver_thread_ids":["ch1"],"agents_states":{"ch1":{"status":"running","message":"Reading auth.go"}}}}`,
+		`{"type":"item.completed","item":{"id":"w2","type":"collab_tool_call","tool":"wait","status":"completed","receiver_thread_ids":["ch1"],"agents_states":{"ch1":{"status":"completed","message":"Done"}}}}`,
+	}
+	p := &codexParser{}
+	var all []Update
+	for _, l := range lines {
+		all = append(all, p.parse([]byte(l))...)
+	}
+
+	var started, activity, ended bool
+	for _, u := range all {
+		switch {
+		case u.Kind == UpdSubAgentStart && u.ID == "ch1" && u.Text == "Map the auth module":
+			started = true
+		case u.Kind == UpdSubAgentActivity && u.ID == "ch1" && u.Detail == "Reading auth.go":
+			activity = true
+		case u.Kind == UpdSubAgentEnd && u.ID == "ch1" && !u.Failed:
+			ended = true
+		}
+	}
+	if !(started && activity && ended) {
+		t.Fatalf("sub-agent lifecycle incomplete: started=%v activity=%v ended=%v in %+v", started, activity, ended, all)
+	}
+}
+
 func TestCodexTurnFailureIsReported(t *testing.T) {
 	p := &codexParser{}
 	got := p.parse([]byte(`{"type":"turn.failed","error":{"message":"quota exceeded"}}`))

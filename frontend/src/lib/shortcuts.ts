@@ -4,6 +4,7 @@ export const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'P', action: 'Create a project' },
   { keys: '[', action: 'Show or hide the projects panel' },
   { keys: 'D', action: 'Open or close the dashboard of all agents' },
+  { keys: 'B', action: 'Open the browser to read a web page' },
   { keys: ']', action: 'Show or hide the inspector' },
   { keys: 'Alt + ↑ / ↓', action: 'Select the previous or next agent' },
   { keys: 'F', action: 'Focus the selected agent, or fit everything' },
@@ -16,7 +17,8 @@ export const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Drag a planet', action: 'Reposition it within its system' },
   { keys: 'Esc', action: 'Close a dialog, menu or the inspector' },
   { keys: '?', action: 'Show this list' },
+  { keys: ',', action: 'Open settings' },
 ]
 
 /** Tabs in the order of the number keys 1 to 6. */
-export const TAB_KEYS = ['overview', 'chat', 'activity', 'files', 'tools', 'issues'] as const
+export const TAB_KEYS = ['overview', 'chat', 'files', 'changes'] as const

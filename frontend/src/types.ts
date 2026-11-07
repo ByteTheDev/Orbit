@@ -26,6 +26,8 @@ export interface Project {
   icon?: string
   /** Non-zero when an uploaded PNG icon exists. Changes on each upload, so it keys the image cache. */
   iconRev?: number
+  /** When on, each completed turn commits the files the agent wrote. */
+  autoCommit?: boolean
 }
 
 export interface ConflictAgent {
@@ -38,10 +40,41 @@ export interface Conflict {
   agents: ConflictAgent[]
 }
 
+/** A task one agent delegated to another. Active until the receiving agent's turn ends. */
+export interface Handoff {
+  id: string
+  projectId: string
+  fromId: string
+  toId: string
+  task: string
+  status: 'active' | 'done' | 'failed'
+  at: number
+  doneAt?: number
+}
+
+/** A live talk between two agents in one project. Each reply is passed to the other agent. */
+export interface Conversation {
+  id: string
+  projectId: string
+  agentAId: string
+  agentBId: string
+  topic: string
+  status: 'active' | 'done' | 'stopped' | 'failed'
+  /** The agent whose turn is running or due next. */
+  nextId: string
+  replies: number
+  maxReplies: number
+  error?: string
+  at: number
+  doneAt?: number
+}
+
 export interface ProjectSummary extends Project {
   agentCount: number
   runningCount: number
   conflicts: Conflict[]
+  handoffs: Handoff[]
+  conversations: Conversation[]
 }
 
 export interface PermissionMode {
@@ -56,6 +89,12 @@ export interface ModelOption {
   label: string
   group: string
   description: string
+  /** True when the provider can run this model in fast mode. */
+  fastMode: boolean
+  /** Thinking effort levels this model accepts, lowest first. Empty means no effort control. */
+  effort: string[]
+  /** The level the CLI uses when none is chosen. Informational. */
+  defaultEffort: string
 }
 
 export interface Capabilities {
@@ -89,6 +128,10 @@ export interface AgentSummary {
   statusDetail: string
   sessionId: string
   running: boolean
+  /** The agent runs in fast mode. */
+  fastMode: boolean
+  /** Thinking effort for this agent's turns. Empty means the CLI default. */
+  effort: string
   position?: Point
   createdAt: number
   updatedAt: number
@@ -101,7 +144,23 @@ export interface AgentSummary {
   writeCount: number
   issueCount: number
   recentFiles: FileActivity[]
+  recentTools: ToolCall[]
+  subAgents: SubAgent[]
   capabilities: Capabilities
+}
+
+/** An image the composer sends with a message. Data is base64 without a data-URL prefix. */
+export interface ImageUpload {
+  name: string
+  mediaType: string
+  data: string
+}
+
+/** An image sent with a chat message. The webview fetches its pixels on demand. */
+export interface Attachment {
+  id: string
+  name: string
+  mediaType: string
 }
 
 export interface Message {
@@ -110,6 +169,20 @@ export interface Message {
   text: string
   streaming: boolean
   at: number
+  /** Absent when the message has no images. */
+  attachments?: Attachment[]
+}
+
+/** A sub-agent an agent started with its Task tool. Orbits its parent as a small icon. */
+export interface SubAgent {
+  id: string
+  name: string
+  kind: string
+  status: string
+  detail: string
+  actions: number
+  at: number
+  doneAt?: number
 }
 
 export interface ToolCall {
@@ -124,7 +197,7 @@ export interface ToolCall {
 
 export interface ActivityEntry {
   id: number
-  kind: 'status' | 'tool' | 'file' | 'message' | 'error' | 'warning' | 'system'
+  kind: 'status' | 'tool' | 'file' | 'message' | 'error' | 'warning' | 'system' | 'commit'
   text: string
   at: number
 }
@@ -188,6 +261,34 @@ export interface FileDiffResult {
   gitNotice: string
 }
 
+/** One changed path from `git status`. A path can be staged and unstaged at once. */
+export interface GitChange {
+  path: string
+  oldPath?: string
+  staged: boolean
+  unstaged: boolean
+  untracked: boolean
+  /** git's one-letter codes for the index and worktree sides (M, A, D, R, ?, space). */
+  index: string
+  worktree: string
+}
+
+export interface GitStatus {
+  /** Empty when HEAD is detached. */
+  branch: string
+  hasCommits: boolean
+  changes: GitChange[]
+}
+
+export interface GitCommit {
+  hash: string
+  short: string
+  subject: string
+  author: string
+  /** Unix milliseconds. */
+  at: number
+}
+
 export interface LaunchRequest {
   projectId: string
   name: string
@@ -195,6 +296,47 @@ export interface LaunchRequest {
   model: string
   permissionMode: string
   task: string
+  /** Run in fast mode. The backend refuses it unless the model supports it. */
+  fastMode: boolean
+  /** Thinking effort. Empty uses the CLI default. The backend refuses levels the model does not offer. */
+  effort: string
+}
+
+/** One usage window a provider reports, such as the 5-hour or weekly allowance. */
+export interface LimitWindow {
+  label: string
+  /** Share of the window already used, 0 to 100. */
+  usedPercent: number
+  /** When the window resets, unix milliseconds. 0 when unknown. */
+  resetsAt: number
+}
+
+/** A provider's account allowance, as its CLI reports it. */
+export interface ProviderLimits {
+  provider: string
+  plan: string
+  windows: LimitWindow[]
+  /** Why the limits could not be read. Empty when windows are current. */
+  error: string
+  /** When the CLI was asked, unix milliseconds. */
+  checkedAt: number
+}
+
+/** An anchor on a web page, resolved to an absolute address. */
+export interface BrowserLink {
+  text: string
+  url: string
+}
+
+/** A web page as the built-in browser reads it. Mirrors internal/browser.Page. */
+export interface BrowserPage {
+  url: string
+  status: number
+  contentType: string
+  title: string
+  text: string
+  links: BrowserLink[]
+  truncated: boolean
 }
 
 export type OrbitEvent =

@@ -4,9 +4,14 @@
 import type {
   AgentDetail,
   AgentSummary,
+  BrowserPage,
   FileDiffResult,
+  GitCommit,
+  GitStatus,
+  ImageUpload,
   LaunchRequest,
   OrbitEvent,
+  ProviderLimits,
   ProjectSummary,
   Snapshot,
 } from '../types'
@@ -60,6 +65,15 @@ export const api = {
   getAgentDetail: (agentId: string) => call<AgentDetail>((b) => b.GetAgentDetail(agentId)),
   getFileDiff: (agentId: string, path: string) =>
     call<FileDiffResult>((b) => b.GetFileDiff(agentId, path)),
+  getGitStatus: (projectId: string) => call<GitStatus>((b) => b.GetGitStatus(projectId)),
+  getGitDiff: (projectId: string, path: string, staged: boolean, untracked: boolean) =>
+    call<string>((b) => b.GetGitDiff(projectId, path, staged, untracked)),
+  getGitLog: (projectId: string) => call<GitCommit[]>((b) => b.GetGitLog(projectId)),
+  stageFiles: (projectId: string, paths: string[]) => call<void>((b) => b.StageFiles(projectId, paths)),
+  unstageFiles: (projectId: string, paths: string[]) => call<void>((b) => b.UnstageFiles(projectId, paths)),
+  commitChanges: (projectId: string, message: string, paths: string[]) =>
+    call<string>((b) => b.CommitChanges(projectId, message, paths)),
+  setProjectAutoCommit: (projectId: string, on: boolean) => call<void>((b) => b.SetProjectAutoCommit(projectId, on)),
   pickRepository: () => call<string>((b) => b.PickRepository()),
   createProject: (name: string, repoPath: string) =>
     call<ProjectSummary>((b) => b.CreateProject(name, repoPath)),
@@ -69,7 +83,10 @@ export const api = {
     call<void>((b) => b.SetProjectIconImage(projectId, pngBase64)),
   getProjectIcon: (projectId: string) => call<string>((b) => b.GetProjectIcon(projectId)),
   launchAgent: (req: LaunchRequest) => call<AgentSummary>((b) => b.LaunchAgent(req as never)),
-  sendMessage: (agentId: string, text: string) => call<void>((b) => b.SendMessage(agentId, text)),
+  sendMessage: (agentId: string, text: string, images: ImageUpload[]) => call<void>((b) => b.SendMessage(agentId, text, images)),
+  attachmentImage: (agentId: string, attachmentId: string) =>
+    call<string>((b) => b.AttachmentImage(agentId, attachmentId)),
+  getLimits: (force: boolean) => call<ProviderLimits[]>((b) => b.GetLimits(force)),
   resumeAgent: (agentId: string) => call<void>((b) => b.ResumeAgent(agentId)),
   stopAgent: (agentId: string) => call<void>((b) => b.StopAgent(agentId)),
   removeAgent: (agentId: string) => call<void>((b) => b.RemoveAgent(agentId)),
@@ -81,6 +98,42 @@ export const api = {
   writeTerminal: (terminalId: string, data: string) => call<void>((b) => b.WriteTerminal(terminalId, data)),
   resizeTerminal: (terminalId: string, cols: number, rows: number) => call<void>((b) => b.ResizeTerminal(terminalId, cols, rows)),
   closeTerminal: (terminalId: string) => call<void>((b) => b.CloseTerminal(terminalId)),
+  browserFetch: (address: string) => call<BrowserPage>((b) => b.BrowserFetch(address)),
+  browserOpenExternal: (address: string) => call<void>((b) => b.BrowserOpenExternal(address)),
+  browserPaneSupported: () => call<boolean>((b) => b.BrowserPaneSupported()),
+  browserPaneOpen: (address: string, x: number, y: number, w: number, h: number) =>
+    call<void>((b) => b.BrowserPaneOpen(address, x, y, w, h)),
+  browserPaneNavigate: (address: string) => call<void>((b) => b.BrowserPaneNavigate(address)),
+  browserPaneSetBounds: (x: number, y: number, w: number, h: number) => call<void>((b) => b.BrowserPaneSetBounds(x, y, w, h)),
+  browserPaneBack: () => call<void>((b) => b.BrowserPaneBack()),
+  browserPaneForward: () => call<void>((b) => b.BrowserPaneForward()),
+  browserPaneReload: () => call<void>((b) => b.BrowserPaneReload()),
+  browserPaneStop: () => call<void>((b) => b.BrowserPaneStop()),
+  browserPaneHide: () => call<void>((b) => b.BrowserPaneHide()),
+  browserPaneClose: () => call<void>((b) => b.BrowserPaneClose()),
+}
+
+/** What the native page view reports. Each event carries the full state. */
+export interface BrowserPaneState {
+  url: string
+  title: string
+  loading: boolean
+  error?: string
+}
+
+/** Subscribes to the page view's state. Returns an unsubscribe function. */
+export function onBrowserPane(handler: (s: BrowserPaneState) => void): () => void {
+  if (!inWails()) return () => {}
+  let off: (() => void) | undefined
+  let cancelled = false
+  void load().then(() => {
+    if (cancelled || !runtime) return
+    off = runtime.EventsOn('browser:pane', (s: BrowserPaneState) => handler(s)) as unknown as () => void
+  })
+  return () => {
+    cancelled = true
+    off?.()
+  }
 }
 
 export interface TerminalHandlers {

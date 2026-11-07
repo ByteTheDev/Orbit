@@ -91,6 +91,20 @@ export const IconShield = (p: IconProps) => (
   </Icon>
 )
 
+export const IconEye = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+    <circle cx="12" cy="12" r="2.8" />
+  </Icon>
+)
+
+export const IconUnlock = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="5" y="10.5" width="14" height="10" rx="2.2" />
+    <path d="M8 10.5V7.5a4 4 0 0 1 7.7-1.5" />
+  </Icon>
+)
+
 export const IconText = (p: IconProps) => (
   <Icon {...p}>
     <path d="M4 6.5h16M4 12h10M4 17.5h7" />
@@ -109,10 +123,25 @@ export const IconCheck = (p: IconProps) => (
   </Icon>
 )
 
+export const IconSearch = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="M16 16l4 4" />
+  </Icon>
+)
+
 export const IconKeyboard = (p: IconProps) => (
   <Icon {...p}>
     <rect x="2.5" y="6" width="19" height="12" rx="2.5" />
     <path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7 14h10" />
+  </Icon>
+)
+
+export const IconSettings = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
+    <circle cx="15" cy="7" r="2" />
+    <circle cx="9" cy="17" r="2" />
   </Icon>
 )
 
@@ -186,5 +215,12 @@ export const IconInspect = (p: IconProps) => (
   <Icon {...p}>
     <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
     <path d="M14.5 4.5v15M7 9.5h4M7 13h4" />
+  </Icon>
+)
+
+export const IconGlobe = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M3.5 12h17M12 3.5c2.4 2.5 3.6 5.3 3.6 8.5s-1.2 6-3.6 8.5c-2.4-2.5-3.6-5.3-3.6-8.5s1.2-6 3.6-8.5z" />
   </Icon>
 )

@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"orbit/internal/conflict"
+	"orbit/internal/gitdiff"
 	"orbit/internal/model"
 	"orbit/internal/provider"
 	"orbit/internal/store"
@@ -44,6 +45,12 @@ type run struct {
 	done          bool
 	success       bool
 	text          string
+	// reply is the agent's last assistant message this turn. Conversations relay it.
+	reply string
+	// startedAt and prompt describe the turn. Auto-commit uses them to find the files
+	// this turn wrote and to name the commit.
+	startedAt int64
+	prompt    string
 }
 
 // Manager is safe for concurrent use. All state lives behind mu.
@@ -55,6 +62,8 @@ type Manager struct {
 	providers     map[string]provider.Provider
 	dirtyAgents   map[string]bool
 	dirtyProjects map[string]bool
+	handoffs      []model.Handoff // newest last, capped at maxHandoffs
+	conversations []model.Conversation
 	pending       []model.Event
 	flushTimer    *time.Timer
 	flushMu       sync.Mutex
@@ -62,6 +71,10 @@ type Manager struct {
 	onChange      func()
 	seq           int64
 	iconDir       string
+	// attachmentDir holds the images sent in chat messages. See attachments.go.
+	attachmentDir string
+	// browserCmd is the Orbit executable that gives agents the browser tool. See SetBrowserCommand.
+	browserCmd string
 }
 
 // New creates an empty manager. emit receives each flushed batch; onChange is
@@ -278,6 +291,10 @@ type LaunchRequest struct {
 	Model          string `json:"model"`
 	PermissionMode string `json:"permissionMode"`
 	Task           string `json:"task"`
+	// FastMode runs the agent in fast mode. Only valid for a model that supports it.
+	FastMode bool `json:"fastMode"`
+	// Effort is the thinking effort level. Empty uses the CLI default. Must be one the model offers.
+	Effort string `json:"effort"`
 }
 
 // Launch creates an agent in a project and, when a task is given, starts its first turn.
@@ -294,6 +311,12 @@ func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
 		if caps := prov.Capabilities(); len(caps.Models) > 0 && !caps.HasModel(req.Model) {
 			return model.AgentSummary{}, fmt.Errorf("%s does not offer the model %q", prov.Name(), req.Model)
 		}
+	}
+	if req.FastMode && !prov.Capabilities().SupportsFastMode(req.Model) {
+		return model.AgentSummary{}, fmt.Errorf("fast mode is not available for this model on %s", prov.Name())
+	}
+	if req.Effort != "" && !prov.Capabilities().SupportsEffort(req.Model, req.Effort) {
+		return model.AgentSummary{}, fmt.Errorf("%q thinking is not available for this model on %s", req.Effort, prov.Name())
 	}
 
 	m.mu.Lock()
@@ -321,6 +344,8 @@ func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
 		Name:           name,
 		Provider:       prov.ID(),
 		Model:          strings.TrimSpace(req.Model),
+		FastMode:       req.FastMode,
+		Effort:         req.Effort,
 		Task:           strings.TrimSpace(req.Task),
 		PermissionMode: mode,
 		Status:         model.StatusIdle,
@@ -338,7 +363,7 @@ func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
 	m.changedLocked()
 
 	if rec.Task != "" {
-		if err := m.startTurnLocked(rec, rec.Task); err != nil {
+		if err := m.startTurnLocked(rec, rec.Task, nil); err != nil {
 			return m.summaryLocked(rec), err
 		}
 	}
@@ -346,21 +371,93 @@ func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
 }
 
 // Send starts a new turn with the given message.
-func (m *Manager) Send(agentID, text string) error {
+// maxHandoffs bounds the handoffs kept in memory. Old ones fall off first.
+const maxHandoffs = 50
+
+// ErrOtherProject is returned when a handoff would cross between projects or to the same agent.
+var ErrOtherProject = errors.New("delegate to another agent in the same project")
+
+// Delegate starts a turn on agent toID with task, on behalf of fromID, and records a handoff
+// that stays active until toID's turn ends.
+func (m *Manager) Delegate(fromID, toID, task string) (model.Handoff, error) {
+	task = strings.TrimSpace(task)
+	if task == "" {
+		return model.Handoff{}, errors.New("describe the task first")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	from, okFrom := m.agents[fromID]
+	to, okTo := m.agents[toID]
+	if !okFrom || !okTo {
+		return model.Handoff{}, ErrNotFound
+	}
+	if fromID == toID || from.ProjectID != to.ProjectID {
+		return model.Handoff{}, ErrOtherProject
+	}
+	if !m.capsLocked(to).Send {
+		return model.Handoff{}, errors.New("this provider does not accept messages")
+	}
+	prompt := fmt.Sprintf("%s delegated this task to you:\n\n%s", from.Name, task)
+	if err := m.startTurnLocked(to, prompt, nil); err != nil {
+		return model.Handoff{}, err
+	}
+	now := nowMs()
+	h := model.Handoff{
+		ID: newID(), ProjectID: to.ProjectID, FromID: fromID, ToID: toID,
+		Task: model.Truncate(task, 240), Status: model.HandoffActive, At: now,
+	}
+	m.handoffs = append(m.handoffs, h)
+	if len(m.handoffs) > maxHandoffs {
+		m.handoffs = m.handoffs[len(m.handoffs)-maxHandoffs:]
+	}
+	m.dirtyProjects[to.ProjectID] = true
+	return h, nil
+}
+
+// settleHandoffsLocked ends the active handoffs to agent toID when its turn finishes.
+func (m *Manager) settleHandoffsLocked(toID string, success bool, now int64) {
+	status := model.HandoffFailed
+	if success {
+		status = model.HandoffDone
+	}
+	for i := range m.handoffs {
+		h := &m.handoffs[i]
+		if h.ToID != toID || h.Status != model.HandoffActive {
+			continue
+		}
+		h.Status = status
+		h.DoneAt = now
+		m.dirtyProjects[h.ProjectID] = true
+	}
+}
+
+// Send starts a new turn with the given text and optional images. Text may be empty when
+// images are attached.
+func (m *Manager) Send(agentID, text string, uploads []model.ImageUpload) error {
 	text = strings.TrimSpace(text)
-	if text == "" {
+	if text == "" && len(uploads) == 0 {
 		return errors.New("type a message first")
+	}
+	images, err := m.saveImages(uploads)
+	if err != nil {
+		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec, ok := m.agents[agentID]
 	if !ok {
+		removeImageFiles(images)
 		return ErrNotFound
 	}
 	if !m.capsLocked(rec).Send {
+		removeImageFiles(images)
 		return errors.New("this provider does not accept messages")
 	}
-	return m.startTurnLocked(rec, text)
+	if err := m.startTurnLocked(rec, text, images); err != nil {
+		removeImageFiles(images)
+		return err
+	}
+	return nil
 }
 
 // Resume continues the last session with a nudge to pick the task back up.
@@ -377,7 +474,7 @@ func (m *Manager) Resume(agentID string) error {
 	if rec.Turns == 0 {
 		return errors.New("this agent has not started yet; send it a task instead")
 	}
-	return m.startTurnLocked(rec, "Continue from where you stopped and finish the task.")
+	return m.startTurnLocked(rec, "Continue from where you stopped and finish the task.", nil)
 }
 
 // Stop cancels the running turn. The provider process tree is killed.
@@ -461,7 +558,9 @@ func (m *Manager) SetPosition(agentID string, x, y float64) error {
 
 // ---- turn lifecycle -------------------------------------------------------
 
-func (m *Manager) startTurnLocked(rec *model.AgentRecord, prompt string) error {
+// startTurnLocked begins a turn. images are already stored on disk; the caller removes them if
+// this returns an error.
+func (m *Manager) startTurnLocked(rec *model.AgentRecord, prompt string, images []storedImage) error {
 	if rec.Running {
 		return ErrBusy
 	}
@@ -474,8 +573,17 @@ func (m *Manager) startTurnLocked(rec *model.AgentRecord, prompt string) error {
 		return errors.New("the agent's project no longer exists")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &run{cancel: cancel}
+	r := &run{cancel: cancel, startedAt: nowMs(), prompt: prompt}
 	m.runs[rec.ID] = r
+
+	// The provider needs some text even when the user only attached images.
+	sent := prompt
+	if sent == "" {
+		sent = "Describe the attached image."
+		if len(images) > 1 {
+			sent = "Describe the attached images."
+		}
+	}
 
 	now := nowMs()
 	rec.Running = true
@@ -484,19 +592,29 @@ func (m *Manager) startTurnLocked(rec *model.AgentRecord, prompt string) error {
 	rec.LastError = ""
 	rec.Status = model.StatusThinking
 	rec.StatusDetail = "Starting"
-	rec.Messages = appendCapped(rec.Messages, model.Message{ID: newID(), Role: "user", Text: model.Truncate(prompt, model.MaxTextBytes), At: now}, model.MaxMessages)
-	m.addActivityLocked(rec, "message", "You: "+firstLine(prompt, 90))
+	rec.Messages = appendCapped(rec.Messages, model.Message{
+		ID:          newID(),
+		Role:        "user",
+		Text:        model.Truncate(prompt, model.MaxTextBytes),
+		At:          now,
+		Attachments: attachmentsOf(images),
+	}, model.MaxMessages)
+	m.addActivityLocked(rec, "message", "You: "+firstLine(sent, 90))
 	m.markAgentLocked(rec.ID)
 	m.changedLocked()
 
 	spec := provider.Spec{
 		AgentID:        rec.ID,
 		RepoPath:       proj.RepoPath,
-		Prompt:         prompt,
+		Prompt:         sent,
 		SessionID:      rec.SessionID,
 		Resume:         rec.SessionSeen && rec.SessionID != "",
 		Model:          rec.Model,
 		PermissionMode: rec.PermissionMode,
+		FastMode:       rec.FastMode,
+		Effort:         rec.Effort,
+		Images:         providerImages(images),
+		BrowserCommand: m.browserCmd,
 	}
 	go m.runTurn(ctx, r, rec.ID, prov, spec)
 	return nil
@@ -535,8 +653,83 @@ func (m *Manager) runTurn(ctx context.Context, r *run, id string, prov provider.
 	default:
 		m.setStatusLocked(rec, model.StatusCompleted, "Turn complete")
 	}
+	m.maybeAutoCommitLocked(rec, r)
+	m.advanceConversationLocked(rec, r)
 	m.markAgentLocked(id)
 	m.changedLocked()
+}
+
+// maybeAutoCommitLocked starts a commit of the files this turn wrote, when the project has
+// auto-commit on and the turn completed. The git work runs in its own goroutine, so it
+// waits for the lock to be released and never blocks event handling.
+func (m *Manager) maybeAutoCommitLocked(rec *model.AgentRecord, r *run) {
+	proj, ok := m.projects[rec.ProjectID]
+	if !ok || !proj.AutoCommit || rec.Status != model.StatusCompleted {
+		return
+	}
+	paths := turnWrites(rec, r.startedAt)
+	if len(paths) == 0 {
+		return
+	}
+	go m.autoCommit(rec.ID, proj.RepoPath, paths, autoCommitMessage(rec.Name, r.prompt))
+}
+
+// autoCommit commits the given paths and logs the outcome on the agent's activity.
+func (m *Manager) autoCommit(agentID, repo string, paths []string, message string) {
+	hash, err := gitdiff.Commit(repo, message, paths)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.agents[agentID]
+	if !ok {
+		return
+	}
+	if err != nil {
+		m.addActivityLocked(rec, "commit", "Auto-commit skipped: "+firstLine(err.Error(), 140))
+	} else {
+		m.addActivityLocked(rec, "commit", "Auto-committed "+hash+": "+firstLine(message, 90))
+	}
+	m.markAgentLocked(agentID)
+	m.changedLocked()
+}
+
+// turnWrites lists the files the agent wrote at or after since.
+func turnWrites(rec *model.AgentRecord, since int64) []string {
+	var paths []string
+	for _, f := range rec.Files {
+		for _, op := range f.Ops {
+			if op.Op == "write" && op.At >= since {
+				paths = append(paths, f.Path)
+				break
+			}
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// autoCommitMessage names the commit after the agent and its request.
+func autoCommitMessage(agentName, prompt string) string {
+	what := firstLine(prompt, 72)
+	if what == "" {
+		what = "update files"
+	}
+	return "Orbit: " + agentName + " - " + what
+}
+
+// SetProjectAutoCommit turns auto-commit on or off for a project.
+func (m *Manager) SetProjectAutoCommit(id string, on bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.projects[id]
+	if !ok {
+		return errors.New("that project no longer exists")
+	}
+	p.AutoCommit = on
+	m.dirtyProjects[id] = true
+	m.scheduleFlushLocked()
+	m.changedLocked()
+	return nil
 }
 
 // applyLocked folds one provider update into the agent's state.
@@ -570,6 +763,9 @@ func (m *Manager) applyLocked(rec *model.AgentRecord, r *run, u provider.Update)
 	case provider.UpdMessageEnd:
 		if idx := findMessage(rec.Messages, u.ID); idx >= 0 {
 			rec.Messages[idx].Streaming = false
+			if rec.Messages[idx].Role == "assistant" {
+				r.reply = rec.Messages[idx].Text
+			}
 			m.pending = append(m.pending, model.Event{Type: "messageEnd", AgentID: rec.ID, MessageID: u.ID})
 			m.scheduleFlushLocked()
 			m.addActivityLocked(rec, "message", "Agent replied: "+firstLine(rec.Messages[idx].Text, 90))
@@ -577,6 +773,7 @@ func (m *Manager) applyLocked(rec *model.AgentRecord, r *run, u provider.Update)
 	case provider.UpdMessage:
 		m.upsertMessageLocked(rec, model.Message{ID: u.ID, Role: roleOr(u.Role), Text: model.Truncate(u.Text, model.MaxTextBytes), At: now})
 		if roleOr(u.Role) == "assistant" {
+			r.reply = u.Text
 			m.addActivityLocked(rec, "message", "Agent replied: "+firstLine(u.Text, 90))
 		}
 	case provider.UpdToolStart:
@@ -605,13 +802,32 @@ func (m *Manager) applyLocked(rec *model.AgentRecord, r *run, u provider.Update)
 		m.addIssueLocked(rec, u.Level, u.Text)
 	case provider.UpdActivity:
 		m.addActivityLocked(rec, "system", u.Text)
-	case provider.UpdTurnDone:
+	case provider.UpdSubAgentStart:
+			startSubAgent(rec, u, now)
+			m.addActivityLocked(rec, "system", "Sub-agent started: "+firstLine(u.Text, 90))
+		case provider.UpdSubAgentActivity:
+			if s := findSubAgent(rec, u.ID); s != nil {
+				s.Actions++
+				s.Detail = model.Truncate(u.Detail, 120)
+			}
+		case provider.UpdSubAgentEnd:
+			if s := findSubAgent(rec, u.ID); s != nil {
+				s.Status = "ok"
+				if u.Failed {
+					s.Status = "error"
+				}
+				s.DoneAt = now
+			}
+		case provider.UpdTurnDone:
 		r.done = true
 		r.success = u.Success
 		r.text = u.Text
 		if u.Text != "" && u.Success {
+			r.reply = u.Text
 			rec.StatusDetail = firstLine(u.Text, 120)
 		}
+		finishSubAgents(rec, now)
+			m.settleHandoffsLocked(rec.ID, u.Success, now)
 	}
 	rec.UpdatedAt = now
 	m.markAgentLocked(rec.ID)
@@ -729,10 +945,14 @@ func (m *Manager) addIssueLocked(rec *model.AgentRecord, level, text string) {
 }
 
 func (m *Manager) removeAgentLocked(id string) {
+	m.endConversationsOfLocked(id, "An agent in this talk was removed")
 	if r, ok := m.runs[id]; ok {
 		r.stopRequested = true
 		r.cancel()
 		delete(m.runs, id)
+	}
+	if rec, ok := m.agents[id]; ok {
+		m.removeAttachmentFilesLocked(rec)
 	}
 	delete(m.agents, id)
 	delete(m.dirtyAgents, id)
@@ -810,6 +1030,8 @@ func (m *Manager) summaryLocked(rec *model.AgentRecord) model.AgentSummary {
 		Provider:       rec.Provider,
 		ProviderName:   rec.Provider,
 		Model:          rec.Model,
+		FastMode:       rec.FastMode,
+		Effort:         rec.Effort,
 		Task:           rec.Task,
 		PermissionMode: rec.PermissionMode,
 		Status:         rec.Status,
@@ -839,11 +1061,36 @@ func (m *Manager) summaryLocked(rec *model.AgentRecord) model.AgentSummary {
 		recent = recent[:maxRecentFiles]
 	}
 	s.RecentFiles = recent
+	s.RecentTools = recentToolSummaries(rec.Tools)
+	s.SubAgents = append(make([]model.SubAgent, 0, len(rec.SubAgents)), rec.SubAgents...)
 	if hasProv {
 		s.ProviderName = prov.Name()
 		s.Capabilities = prov.Capabilities()
 	}
 	return s
+}
+
+// maxRecentTools bounds the tool calls sent with every agent summary.
+const maxRecentTools = 8
+
+// recentToolSummaries returns the latest tool calls that are still running, without their input
+// or output, so the summary stays light. Finished calls drop out, so their rocks leave the galaxy.
+// It never returns nil, so an empty list serialises as [].
+func recentToolSummaries(tools []model.ToolCall) []model.ToolCall {
+	var running []model.ToolCall
+	for _, t := range tools {
+		if t.Status != "running" {
+			continue
+		}
+		t.Input = ""
+		t.Output = ""
+		running = append(running, t)
+	}
+	if len(running) > maxRecentTools {
+		running = running[len(running)-maxRecentTools:]
+	}
+	out := make([]model.ToolCall, 0, len(running))
+	return append(out, running...)
 }
 
 func (m *Manager) capsLocked(rec *model.AgentRecord) model.Capabilities {
@@ -854,7 +1101,17 @@ func (m *Manager) capsLocked(rec *model.AgentRecord) model.Capabilities {
 }
 
 func (m *Manager) projectSummaryLocked(p *model.Project) model.ProjectSummary {
-	ps := model.ProjectSummary{Project: *p, Conflicts: []model.Conflict{}}
+	ps := model.ProjectSummary{Project: *p, Conflicts: []model.Conflict{}, Handoffs: []model.Handoff{}, Conversations: []model.Conversation{}}
+	for _, h := range m.handoffs {
+		if h.ProjectID == p.ID {
+			ps.Handoffs = append(ps.Handoffs, h)
+		}
+	}
+	for _, c := range m.conversations {
+		if c.ProjectID == p.ID {
+			ps.Conversations = append(ps.Conversations, c)
+		}
+	}
 	var writes []conflict.AgentWrites
 	for _, a := range m.agents {
 		if a.ProjectID != p.ID {
@@ -906,6 +1163,39 @@ func copyFile(f *model.FileActivity, withOps bool) model.FileActivity {
 		c.Ops = nil
 	}
 	return c
+}
+
+// startSubAgent records a new running sub-agent. Once the list is full, the oldest one falls off.
+func startSubAgent(rec *model.AgentRecord, u provider.Update, now int64) {
+	if findSubAgent(rec, u.ID) != nil {
+		// A provider can report the same sub-agent more than once; keep the first record.
+		return
+	}
+	s := model.SubAgent{ID: u.ID, Name: model.Truncate(u.Text, 240), Kind: u.Detail, Status: "running", At: now}
+	rec.SubAgents = append(rec.SubAgents, s)
+	if len(rec.SubAgents) > model.MaxSubAgents {
+		rec.SubAgents = rec.SubAgents[len(rec.SubAgents)-model.MaxSubAgents:]
+	}
+}
+
+// findSubAgent returns the sub-agent started by the given Task call, or nil.
+func findSubAgent(rec *model.AgentRecord, id string) *model.SubAgent {
+	for i := len(rec.SubAgents) - 1; i >= 0; i-- {
+		if rec.SubAgents[i].ID == id {
+			return &rec.SubAgents[i]
+		}
+	}
+	return nil
+}
+
+// finishSubAgents marks sub-agents still running when their turn ends as done, so none stays animated.
+func finishSubAgents(rec *model.AgentRecord, now int64) {
+	for i := range rec.SubAgents {
+		if rec.SubAgents[i].Status == "running" {
+			rec.SubAgents[i].Status = "ok"
+			rec.SubAgents[i].DoneAt = now
+		}
+	}
 }
 
 func appendCapped[T any](list []T, item T, max int) []T {

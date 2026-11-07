@@ -4,20 +4,26 @@
 // Cost model: each planet's body (surface, bands, craters, atmosphere, rings) is drawn
 // once into a cached sprite. Per frame a planet costs one drawImage, a directional
 // lighting overlay that follows its sun, and its status and selection marks.
-import type { AgentSummary, FileActivity, ProjectSummary, Status } from '../../types'
+import type { AgentSummary, Handoff, ProjectSummary, Status, SubAgent } from '../../types'
+import { toolKind, type ToolKind } from '../toolKind'
+import { BEAM_COLOR, beamAlpha, computeBeams, type Beam } from './beams'
 import { DEFAULT_BODY, PROVIDER_BODY, STATUS_COLOR, type PlanetBody } from '../theme'
 import { worldToScreen, type Camera } from './camera'
-import { planetPosition, type Layout, type Planet } from './layout'
+import { ORBIT_FLOOR_PX, ORBIT_GAP_PX, displayOrbit, planetPosition, type Layout, type Planet } from './layout'
 import { projectIconImage } from '../icons'
 import { identityFor } from '../projectIdentity'
 
-const PLANET_RADIUS = 22 // world units: large enough that surface detail reads at fit zoom
-const SUN_RADIUS = 34 // world units: the star body, sized so its surface still reads when zoomed out
-const MOON_ORBIT = 44
-const MAX_MOONS = 7
+const PLANET_RADIUS = 30 // world units: large enough that surface detail reads at fit zoom
+const SUN_RADIUS = 46 // world units: the star body, sized so its surface still reads when zoomed out
+const ROCK_ORBIT = 58
+/** Rocks shown per agent: the newest tool calls. Matches the backend's recent-tools cap. */
+const MAX_ROCKS = 8
+const ROCK_RADIUS = 6.5 // screen px: big enough to read as a solid object on the dark canvas
 const TAU = Math.PI * 2
 const RING_TILT = -0.32
 export const PULSE_MS = 900
+/** Period of the red ring a failed agent repeats. */
+const FAIL_RING_MS = 1400
 
 /** Body sprites are drawn at this radius and scaled per frame. Sprites cover the atmosphere and rings. */
 const SPRITE_R = 32
@@ -54,63 +60,61 @@ export interface ViewState {
   appearAt: Map<string, number>
 }
 
-export interface Moon {
+/** A rock orbiting a planet: one recent tool call, coloured and labelled by what kind of command it was. */
+export interface Rock {
   key: string
   agentId: string
-  /** null for the "+N more" cluster. */
-  path: string | null
-  state: string
+  kind: ToolKind
+  /** The tool's name as the provider reports it, e.g. "Bash" or "Edit". */
+  name: string
+  status: string
   x: number
   y: number
-  count: number
   appear: number
+  seed: number
 }
 
 export type Hit =
   | { kind: 'planet'; id: string }
-  | { kind: 'moon'; agentId: string; path: string | null; count: number }
+  | { kind: 'rock'; agentId: string; name: string }
   | { kind: 'sun'; id: string }
 
-// ---- moons ------------------------------------------------------------------
+// ---- rocks ------------------------------------------------------------------
 
 /**
- * Miniature planets for the files an agent touched. Active files come first;
- * when there are more than fit, the rest collapse into one "+N" moon.
+ * One rock per recent tool call, newest last. A running call orbits faster and sits further out,
+ * so work in progress stands out from finished work.
  */
-export function moonsFor(agent: AgentSummary, planet: Planet, view: ViewState): Moon[] {
-  const files = agent.recentFiles ?? []
-  if (files.length === 0) return []
-  const active = files.filter((f) => f.state !== 'recent')
-  const recent = files.filter((f) => f.state === 'recent')
-  const ordered = [...active, ...recent]
-  const overflow = ordered.length > MAX_MOONS ? ordered.length - (MAX_MOONS - 1) : 0
-  const shown: (FileActivity | null)[] = overflow > 0 ? ordered.slice(0, MAX_MOONS - 1) : ordered
-  if (overflow > 0) shown.push(null)
+export function rocksFor(agent: AgentSummary, planet: Planet, view: ViewState): Rock[] {
+  // Rocks are live only: they show while the agent is running and a command is in flight.
+  if (!agent.running) return []
+  const tools = (agent.recentTools ?? []).filter((t) => t.status === 'running')
+  if (tools.length === 0) return []
+  const shown = tools.slice(-MAX_ROCKS)
 
-  const center = planetPosition(planet, view.t)
-  const moons: Moon[] = []
-  shown.forEach((f, i) => {
-    const state = f ? f.state : 'cluster'
+  const center = planetPosition(planet, view.t, view.camera.zoom)
+  return shown.map((t, i) => {
+    const running = t.status === 'running'
     const lane = i % 2 === 0 ? 0 : 1
-    const radius = MOON_ORBIT + lane * 9 + (state === 'writing' ? 3 : 0)
-    const speed = (state === 'writing' ? 0.9 : state === 'reading' ? 0.5 : 0.22) * (lane === 0 ? 1 : -1)
-    const base = (i / shown.length) * Math.PI * 2 + hashAngle(f?.path ?? 'more')
+    const radius = ROCK_ORBIT + lane * 9 + (running ? 3 : 0)
+    const speed = (running ? 0.9 : 0.22) * (lane === 0 ? 1 : -1)
+    const base = (i / shown.length) * TAU + hashAngle(t.id)
     const a = base + (view.reduced ? 0 : speed * view.t)
-    const appearKey = `${agent.id}|${f?.path ?? 'more'}`
-    const seen = view.appearAt.get(appearKey)
+    const key = `${agent.id}|${t.id || t.at}`
+    const seen = view.appearAt.get(key)
     const appear = seen === undefined ? 0 : easeOut(Math.min(1, (view.now - seen) / 380))
-    moons.push({
-      key: appearKey,
+    return {
+      key,
       agentId: agent.id,
-      path: f ? f.path : null,
-      state,
+      kind: toolKind(t.name),
+      name: t.name || 'Tool',
+      status: t.status,
       x: center.x + Math.cos(a) * radius,
       y: center.y + Math.sin(a) * radius,
-      count: f ? 1 : overflow,
       appear,
-    })
+      seed: hashString(t.id),
+    }
   })
-  return moons
 }
 
 function hashAngle(s: string): number {
@@ -173,55 +177,76 @@ export function drawUniverse(ctx: CanvasRenderingContext2D, view: ViewState, bac
   // Fine trails: a hairline that suggests the path without drawing it as a diagram.
   for (const p of layout.planets) {
     const sun = worldToScreen(cam, w, h, p.sunX, p.sunY)
-    const r = p.radius * cam.zoom
+    const r = displayOrbit(p, cam.zoom) * cam.zoom
     if (!onScreen(sun, r + 4, w, h)) continue
     const selected = p.id === view.selectedId
-    ctx.lineWidth = selected ? 1 : 0.6
-    ctx.setLineDash(selected ? [] : [1.5, 5])
-    ctx.strokeStyle = selected ? 'rgba(244,244,245,0.42)' : 'rgba(244,244,245,0.13)'
+    // Inactive tracks are hairlines that recede into the nebula. The selected track is the one clear line.
+    ctx.lineWidth = selected ? 1.25 : 0.75
+    ctx.setLineDash([])
+    ctx.strokeStyle = selected ? 'rgba(244,244,245,0.6)' : 'rgba(244,244,245,0.16)'
     ctx.beginPath()
     ctx.arc(sun.x, sun.y, r, 0, TAU)
     ctx.stroke()
   }
   ctx.setLineDash([])
 
+  // Labels are placed greedily. A name that would overlap one already drawn is left out, so the
+  // overview names a few systems rather than piling text on top of the stars. The selected and
+  // hovered systems always keep their name.
+  const placed: LabelBox[] = []
   for (const sun of layout.suns) {
     const s = worldToScreen(cam, w, h, sun.x, sun.y)
     if (!onScreen(s, 260, w, h)) continue
     drawSun(ctx, s.x, s.y, identityFor(sun.id).accent, cam.zoom, view.now, view.reduced)
     const project = view.projects.get(sun.id)
     const label = project?.name ?? sun.name
-    const labelY = s.y + Math.max(8, SUN_RADIUS * cam.zoom) + 8
-    ctx.font = '600 12px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
-    ctx.fillStyle = 'rgba(244,244,245,0.9)'
+    const labelY = s.y + Math.max(10, SUN_RADIUS * cam.zoom) + 6
+
+    ctx.font = '600 14px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
+    const nameW = ctx.measureText(label).width
+    const meta = project ? systemMeta(project) : ''
+    ctx.font = '10px "Segoe UI", system-ui, sans-serif'
+    const metaW = meta ? ctx.measureText(meta).width : 0
+    const half = Math.max(nameW, metaW) / 2 + 22
+    const box: LabelBox = { x0: s.x - half, x1: s.x + half, y0: labelY - 2, y1: labelY + (meta ? 28 : 16) }
+    const important = sun.id === view.selectedId || sun.id === view.hoverId
+    if (!important && placed.some((b) => overlaps(b, box))) continue
+    placed.push(box)
+
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
-    if (project) drawProjectBadge(ctx, s.x - ctx.measureText(label).width / 2 - 14, labelY + 7, project)
+    ctx.font = '600 14px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
+    ctx.fillStyle = 'rgba(244,244,245,0.9)'
+    if (project) drawProjectBadge(ctx, s.x - nameW / 2 - 14, labelY + 7, project)
     ctx.fillText(label, s.x, labelY)
     if (project && project.conflicts.length > 0) {
-      drawBadge(ctx, s.x + ctx.measureText(label).width / 2 + 12, labelY + 8, `${project.conflicts.length}`, '#f59e0b')
+      drawBadge(ctx, s.x + nameW / 2 + 12, labelY + 8, `${project.conflicts.length}`, '#f59e0b')
     }
-    if (project && project.agentCount === 0) {
+    if (meta) {
       ctx.font = '11px "Segoe UI", system-ui, sans-serif'
       ctx.fillStyle = MUTED
-      ctx.fillText('No agents yet', s.x, labelY + 18)
+      ctx.fillText(meta, s.x, labelY + 16)
     }
   }
+
+  // Beams sit under the planets, so their ends tuck behind the bodies they connect.
+  drawBeams(ctx, view)
 
   for (const p of layout.planets) {
     const agent = agents.get(p.id)
     if (!agent) continue
-    const pos = planetPosition(p, view.t)
+    const pos = planetPosition(p, view.t, cam.zoom)
     const s = worldToScreen(cam, w, h, pos.x, pos.y)
     // Off-screen planets cost nothing: their sprite, lighting and labels are skipped.
-    if (!onScreen(s, MOON_ORBIT * cam.zoom + 60, w, h)) continue
+    if (!onScreen(s, ROCK_ORBIT * cam.zoom + 60, w, h)) continue
     const sunS = worldToScreen(cam, w, h, p.sunX, p.sunY)
     const r = Math.max(5, PLANET_RADIUS * cam.zoom)
 
     if (cam.zoom >= 0.35) {
-      for (const m of moonsFor(agent, p, view)) drawMoon(ctx, m, s, cam, w, h, view)
+      for (const k of rocksFor(agent, p, view)) drawRock(ctx, k, s, cam, w, h, view)
     }
     drawPlanet(ctx, agent, sunS, s, r, view)
+    if (cam.zoom >= 0.35) drawSubAgents(ctx, agent, s, r, view, cam.zoom)
   }
 
   for (const pulse of view.pulses) {
@@ -237,75 +262,183 @@ export function drawUniverse(ctx: CanvasRenderingContext2D, view: ViewState, bac
   ctx.lineWidth = 1
 }
 
+// ---- beams ------------------------------------------------------------------
+
+/** One delegation particle crosses its beam in this long. */
+const DELEGATION_PERIOD_MS = 2200
+/** A received handoff sends one ring out from the receiving planet over this long. */
+const HANDOFF_RING_MS = 900
+
+/**
+ * Agent-to-agent beams. Delegations carry a particle from the giver to the receiver; a finished
+ * handoff leaves a ring on the receiver and fades; a failed one fades in red; shared files get
+ * a slow amber shimmer. Beams are gently curved so two that share a planet do not stack.
+ */
+function drawBeams(ctx: CanvasRenderingContext2D, view: ViewState): void {
+  const handoffs: Handoff[] = []
+  for (const p of view.projects.values()) handoffs.push(...(p.handoffs ?? []))
+  const beams = computeBeams([...view.agents.values()], handoffs, view.now)
+  if (beams.length === 0) return
+
+  const centres = new Map<string, { x: number; y: number }>()
+  for (const p of view.layout.planets) {
+    const pos = planetPosition(p, view.t, view.camera.zoom)
+    centres.set(p.id, worldToScreen(view.camera, view.width, view.height, pos.x, pos.y))
+  }
+  for (const beam of beams) {
+    const a = centres.get(beam.fromId)
+    const b = centres.get(beam.toId)
+    if (!a || !b) continue
+    const alpha = beamAlpha(beam)
+    if (alpha <= 0) continue
+    const half = Math.hypot(b.x - a.x, b.y - a.y) / 2
+    if (!onScreen({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, half + 12, view.width, view.height)) continue
+    drawBeam(ctx, view, beam, a, b, alpha)
+  }
+  ctx.setLineDash([])
+  ctx.lineDashOffset = 0
+  ctx.lineWidth = 1
+}
+
+function drawBeam(
+  ctx: CanvasRenderingContext2D,
+  view: ViewState,
+  beam: Beam,
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  alpha: number,
+): void {
+  const color = BEAM_COLOR[beam.kind]
+  const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+  const side = hashString(beam.key) % 2 === 0 ? 1 : -1
+  const bow = len * 0.12 * side
+  const c = { x: (a.x + b.x) / 2 - ((b.y - a.y) / len) * bow, y: (a.y + b.y) / 2 + ((b.x - a.x) / len) * bow }
+  const crawl = view.reduced ? 0 : view.now / 40
+
+  ctx.beginPath()
+  ctx.moveTo(a.x, a.y)
+  ctx.quadraticCurveTo(c.x, c.y, b.x, b.y)
+
+  switch (beam.kind) {
+    case 'delegation': {
+      ctx.setLineDash([6, 6])
+      ctx.lineDashOffset = -crawl
+      ctx.lineWidth = 1.6
+      ctx.strokeStyle = withAlpha(color, 0.8 * alpha)
+      ctx.stroke()
+      if (!view.reduced) {
+        const phase = (view.now / DELEGATION_PERIOD_MS + (hashString(beam.key) % 100) / 100) % 1
+        const q = quadPoint(a, c, b, phase)
+        ctx.fillStyle = withAlpha(color, alpha)
+        ctx.beginPath()
+        ctx.arc(q.x, q.y, 2.8, 0, TAU)
+        ctx.fill()
+      }
+      break
+    }
+    case 'handoff': {
+      ctx.lineWidth = 2
+      ctx.strokeStyle = withAlpha(color, 0.75 * alpha)
+      ctx.stroke()
+      const ringT = view.reduced ? 1 : Math.min(1, beam.age / HANDOFF_RING_MS)
+      if (ringT < 1) {
+        ctx.strokeStyle = withAlpha(color, 0.6 * (1 - ringT))
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.arc(b.x, b.y, (PLANET_RADIUS + ringT * 40) * view.camera.zoom, 0, TAU)
+        ctx.stroke()
+      }
+      break
+    }
+    case 'failed': {
+      ctx.setLineDash([2, 5])
+      ctx.lineWidth = 1.2
+      ctx.strokeStyle = withAlpha(color, 0.7 * alpha)
+      ctx.stroke()
+      break
+    }
+    case 'shared': {
+      ctx.setLineDash([1, 5])
+      ctx.lineDashOffset = -crawl / 4
+      ctx.lineWidth = 1 + Math.min(beam.files.length, 3) * 0.5
+      ctx.strokeStyle = withAlpha(color, 0.55 * alpha)
+      ctx.stroke()
+      break
+    }
+  }
+  ctx.setLineDash([])
+  ctx.lineDashOffset = 0
+}
+
+/** Point at parameter t on the quadratic curve from a through c to b. */
+function quadPoint(
+  a: { x: number; y: number },
+  c: { x: number; y: number },
+  b: { x: number; y: number },
+  t: number,
+): { x: number; y: number } {
+  const u = 1 - t
+  return {
+    x: u * u * a.x + 2 * u * t * c.x + t * t * b.x,
+    y: u * u * a.y + 2 * u * t * c.y + t * t * b.y,
+  }
+}
+
 /** True when a disc of radius `pad` around a screen point touches the canvas. */
 function onScreen(p: { x: number; y: number }, pad: number, w: number, h: number): boolean {
   return p.x + pad >= 0 && p.x - pad <= w && p.y + pad >= 0 && p.y - pad <= h
 }
 
+/** Room past a system's outermost planet for its halo, in pixels. */
+const HALO_PAD_PX = 26
 /**
- * The galaxy layer. A faint haze covers every project, and each project is a universe:
- * a soft disc sized to its outermost orbit, headed by its name and agent counts.
- * Drawn under the orbits, so suns and planets stay the focus.
+ * Each project is a solar system: a faint halo sized to its planets, so a whole system reads as
+ * one object before its orbits resolve, with a dotted edge. Drawn under the orbits.
  */
 function drawGalaxy(ctx: CanvasRenderingContext2D, view: ViewState): void {
-  const { width: w, height: h, camera: cam, layout, projects } = view
-  if (layout.suns.length === 0) return
-
-  if (layout.suns.length > 1) {
-    let cx = 0
-    let cy = 0
-    for (const sun of layout.suns) {
-      cx += sun.x
-      cy += sun.y
-    }
-    cx /= layout.suns.length
-    cy /= layout.suns.length
-    let extent = 0
-    for (const sun of layout.suns) extent = Math.max(extent, Math.hypot(sun.x - cx, sun.y - cy) + sun.reach)
-    const g = worldToScreen(cam, w, h, cx, cy)
-    const R = extent * cam.zoom
-    const haze = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, R)
-    haze.addColorStop(0, 'rgba(244,244,245,0.035)')
-    haze.addColorStop(1, 'rgba(244,244,245,0)')
-    ctx.fillStyle = haze
-    ctx.beginPath()
-    ctx.arc(g.x, g.y, R, 0, TAU)
-    ctx.fill()
-  }
-
+  const { width: w, height: h, camera: cam, layout } = view
   for (const sun of layout.suns) {
     const s = worldToScreen(cam, w, h, sun.x, sun.y)
-    const R = sun.reach * cam.zoom
-    if (R < 8 || !onScreen(s, R, w, h)) continue
-    const project = projects.get(sun.id)
+    const floor = ORBIT_FLOOR_PX + Math.max(0, sun.planets - 1) * ORBIT_GAP_PX
+    const R = Math.max(sun.reach * cam.zoom, floor + HALO_PAD_PX)
+    if (!onScreen(s, R, w, h)) continue
+    const accent = identityFor(sun.id).accent
 
     const disc = ctx.createRadialGradient(s.x, s.y, R * 0.3, s.x, s.y, R)
-    disc.addColorStop(0, withAlpha(identityFor(sun.id).accent, 0.012))
-    disc.addColorStop(0.85, withAlpha(identityFor(sun.id).accent, 0.022))
-    disc.addColorStop(1, withAlpha(identityFor(sun.id).accent, 0))
+    disc.addColorStop(0, withAlpha(accent, 0.03))
+    disc.addColorStop(0.85, withAlpha(accent, 0.035))
+    disc.addColorStop(1, withAlpha(accent, 0))
     ctx.fillStyle = disc
     ctx.beginPath()
     ctx.arc(s.x, s.y, R, 0, TAU)
     ctx.fill()
 
     ctx.setLineDash([1, 7])
-    ctx.strokeStyle = withAlpha(identityFor(sun.id).accent, 0.1)
+    ctx.strokeStyle = withAlpha(accent, 0.12)
     ctx.lineWidth = 1
     ctx.beginPath()
     ctx.arc(s.x, s.y, R, 0, TAU)
     ctx.stroke()
     ctx.setLineDash([])
-
-    if (project) {
-      const running = project.runningCount > 0 ? ` · ${project.runningCount} running` : ''
-      const agentsText = `${project.agentCount} agent${project.agentCount === 1 ? '' : 's'}`
-      ctx.font = '600 11px "Segoe UI", system-ui, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'bottom'
-      ctx.fillStyle = withAlpha(identityFor(sun.id).accent, 0.85)
-      ctx.fillText(`${project.name.toUpperCase()}  ·  ${agentsText}${running}`, s.x, s.y - R - 6)
-    }
   }
+}
+
+interface LabelBox {
+  x0: number
+  x1: number
+  y0: number
+  y1: number
+}
+
+function overlaps(a: LabelBox, b: LabelBox): boolean {
+  return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
+}
+
+/** The second line under a system's name: its agent count, and how many are running. */
+function systemMeta(project: ProjectSummary): string {
+  if (project.agentCount === 0) return 'No agents yet'
+  const agents = `${project.agentCount} agent${project.agentCount === 1 ? '' : 's'}`
+  return project.runningCount > 0 ? `${agents} · ${project.runningCount} running` : agents
 }
 
 /** Surface sprites, one per accent, drawn once and scaled every frame. */
@@ -326,57 +459,32 @@ function sunSprite(accent: string): HTMLCanvasElement {
   if (!g) return c
   const cx = side / 2
   const r = SUN_SPRITE_R
-  g.beginPath()
-  g.arc(cx, cx, r, 0, TAU)
-  g.clip()
 
-  // Body: hottest a little up and to the left, cooling toward the limb.
-  const hot = mixHex(accent, '#ffffff', 0.7)
-  const warm = mixHex(accent, '#ffffff', 0.3)
-  const cool = mixHex(accent, '#000000', 0.45)
-  const body = g.createRadialGradient(cx - r * 0.26, cx - r * 0.3, r * 0.04, cx, cx, r)
-  body.addColorStop(0, withAlpha(hot, 1))
-  body.addColorStop(0.38, withAlpha(warm, 1))
-  body.addColorStop(0.72, withAlpha(accent, 1))
-  body.addColorStop(1, withAlpha(cool, 1))
-  g.fillStyle = body
+  // A star is light, not a solid body: no clipped disc and no hard edge. A white-hot centre
+  // fades smoothly through the accent colour into nothing, so it reads as luminous.
+  const hot = mixHex(accent, '#ffffff', 0.85)
+  const warm = mixHex(accent, '#ffffff', 0.4)
+  const light = g.createRadialGradient(cx, cx, 0, cx, cx, r)
+  light.addColorStop(0, withAlpha(hot, 1))
+  light.addColorStop(0.18, withAlpha(hot, 0.97))
+  light.addColorStop(0.4, withAlpha(warm, 0.88))
+  light.addColorStop(0.65, withAlpha(accent, 0.5))
+  light.addColorStop(0.85, withAlpha(accent, 0.16))
+  light.addColorStop(1, withAlpha(accent, 0))
+  g.fillStyle = light
   g.fillRect(0, 0, side, side)
 
-  // Granulation: small convection cells, drawn with a seeded PRNG so every star of one accent matches.
+  // Faint granulation near the centre only: enough texture to feel like a surface, not a planet.
   const rand = seeded(hashString(accent))
-  for (let i = 0; i < 260; i++) {
+  for (let i = 0; i < 90; i++) {
     const a = rand() * TAU
-    const d = Math.sqrt(rand()) * r * 0.94
-    const rad = r * (0.02 + rand() * 0.05)
-    const lit = rand() < 0.55
-    g.fillStyle = lit ? `rgba(255,255,255,${(0.05 + rand() * 0.08).toFixed(3)})` : `rgba(0,0,0,${(0.05 + rand() * 0.1).toFixed(3)})`
+    const d = Math.sqrt(rand()) * r * 0.6
+    const rad = r * (0.03 + rand() * 0.05)
+    g.fillStyle = `rgba(255,255,255,${(0.03 + rand() * 0.04).toFixed(3)})`
     g.beginPath()
     g.arc(cx + Math.cos(a) * d, cx + Math.sin(a) * d, rad, 0, TAU)
     g.fill()
   }
-
-  // A few darker spots, as sunspots are.
-  for (let i = 0; i < 3; i++) {
-    const a = rand() * TAU
-    const d = r * (0.2 + rand() * 0.45)
-    const sx = cx + Math.cos(a) * d
-    const sy = cx + Math.sin(a) * d
-    const sr = r * (0.05 + rand() * 0.05)
-    const spot = g.createRadialGradient(sx, sy, 0, sx, sy, sr)
-    spot.addColorStop(0, 'rgba(0,0,0,0.26)')
-    spot.addColorStop(1, 'rgba(0,0,0,0)')
-    g.fillStyle = spot
-    g.beginPath()
-    g.arc(sx, sy, sr, 0, TAU)
-    g.fill()
-  }
-
-  // Limb darkening: the edge of a star is cooler and dimmer than its face.
-  const limb = g.createRadialGradient(cx, cx, r * 0.7, cx, cx, r)
-  limb.addColorStop(0, 'rgba(0,0,0,0)')
-  limb.addColorStop(1, 'rgba(0,0,0,0.42)')
-  g.fillStyle = limb
-  g.fillRect(0, 0, side, side)
 
   sunSprites.set(accent, c)
   return c
@@ -393,20 +501,21 @@ function drawSun(ctx: CanvasRenderingContext2D, x: number, y: number, accent: st
 
   ctx.save()
   ctx.globalCompositeOperation = 'lighter'
-  const bloom = Math.max(core * 5.5, 84 * zoom)
+  const bloom = Math.max(core * 7, 120 * zoom)
   const glow = ctx.createRadialGradient(x, y, 0, x, y, bloom)
-  glow.addColorStop(0, withAlpha(accent, 0.3 * breath))
-  glow.addColorStop(0.22, withAlpha(accent, 0.1 * breath))
+  glow.addColorStop(0, withAlpha(accent, 0.42 * breath))
+  glow.addColorStop(0.18, withAlpha(accent, 0.16 * breath))
+  glow.addColorStop(0.5, withAlpha(accent, 0.04 * breath))
   glow.addColorStop(1, withAlpha(accent, 0))
   ctx.fillStyle = glow
   ctx.beginPath()
   ctx.arc(x, y, bloom, 0, TAU)
   ctx.fill()
 
-  const corona = core * 2.3
-  const halo = ctx.createRadialGradient(x, y, core * 0.6, x, y, corona)
-  halo.addColorStop(0, withAlpha(SUN_CORE, 0.36 * breath))
-  halo.addColorStop(0.45, withAlpha(accent, 0.2 * breath))
+  const corona = core * 2.8
+  const halo = ctx.createRadialGradient(x, y, core * 0.4, x, y, corona)
+  halo.addColorStop(0, withAlpha(SUN_CORE, 0.5 * breath))
+  halo.addColorStop(0.4, withAlpha(accent, 0.24 * breath))
   halo.addColorStop(1, withAlpha(accent, 0))
   ctx.fillStyle = halo
   ctx.beginPath()
@@ -442,12 +551,12 @@ function drawSun(ctx: CanvasRenderingContext2D, x: number, y: number, accent: st
 }
 
 /**
- * The project's symbol, set beside its name: the uploaded icon if there is one, otherwise the
- * custom letter, otherwise the project's glyph. Centred on (x, y), at the left edge of the label.
+ * The project's uploaded icon or custom letter, set beside its name. Draws nothing when the project
+ * has neither. Centred on (x, y), at the left edge of the label.
  */
 function drawProjectBadge(ctx: CanvasRenderingContext2D, x: number, y: number, project: ProjectSummary): void {
   const identity = identityFor(project.id)
-  const size = 14
+  const size = 18
   const image = projectIconImage(project.id, project.iconRev ?? 0)
   if (image && image.naturalWidth > 0) {
     const side = Math.min(image.naturalWidth, image.naturalHeight)
@@ -472,15 +581,7 @@ function drawProjectBadge(ctx: CanvasRenderingContext2D, x: number, y: number, p
     ctx.restore()
     return
   }
-  ctx.save()
-  ctx.translate(x - size / 2, y - size / 2)
-  ctx.scale(size / 24, size / 24)
-  ctx.strokeStyle = identity.accent
-  ctx.lineWidth = 1.8
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.stroke(new Path2D(identity.glyphPath))
-  ctx.restore()
+  // No generated fallback: a project with no uploaded icon or letter is labelled by its name alone.
 }
 
 /**
@@ -519,6 +620,22 @@ function drawPlanet(ctx: CanvasRenderingContext2D, agent: AgentSummary, sunS: { 
     ctx.fill()
   }
 
+  // A finished agent glows green and breathes slowly. A failed one sends out a red ring that repeats.
+  if (status === 'completed') {
+    const breathe = view.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(view.now / 900)
+    ctx.fillStyle = withAlpha(color, 0.08 + 0.1 * breathe)
+    ctx.beginPath()
+    ctx.arc(s.x, s.y, r * (1.8 + 0.2 * breathe), 0, TAU)
+    ctx.fill()
+  } else if (status === 'failed' && !view.reduced) {
+    const k = (view.now % FAIL_RING_MS) / FAIL_RING_MS
+    ctx.strokeStyle = withAlpha(color, 0.6 * (1 - k))
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.arc(s.x, s.y, r * (1.4 + 1.2 * k), 0, TAU)
+    ctx.stroke()
+  }
+
   // The cached body: atmosphere, back ring, surface, front ring.
   const sprite = planetSprite(agent, body, view.dpr)
   const scale = r / SPRITE_R
@@ -528,15 +645,26 @@ function drawPlanet(ctx: CanvasRenderingContext2D, agent: AgentSummary, sunS: { 
   // Lighting from the sun: shadow falls away from the light, a soft specular sits toward it.
   if (r >= 6) drawLighting(ctx, s.x, s.y, r, lx, ly, body.glow)
 
-  // Status ring. Its style carries the state even without colour.
-  const ringR = r + 5
+  // Status ring. Each state has its own line style, so the state reads without colour:
+  // solid = working, marching dashes = reading, dots = waiting, sparse dashes = stopped, hairline = idle.
+  const ringR = r + (r < 9 ? 3 : 5)
   ctx.lineWidth = status === 'idle' ? 1.2 : 2
-  ctx.strokeStyle = withAlpha(color, status === 'idle' ? 0.6 : status === 'thinking' ? 0.7 + 0.3 * pulse : 1)
-  if (status === 'waiting' || status === 'stopped') ctx.setLineDash([3, 3])
+  ctx.strokeStyle = withAlpha(color, status === 'idle' ? 0.6 : status === 'thinking' ? 0.7 + 0.3 * pulse : status === 'stopped' ? 0.6 : 1)
+  if (status === 'reading') {
+    ctx.setLineDash([4, 4])
+    ctx.lineDashOffset = view.reduced ? 0 : -((view.now / 80) % 8)
+  } else if (status === 'waiting') {
+    ctx.setLineDash([1, 3])
+    ctx.lineCap = 'round'
+  } else if (status === 'stopped') {
+    ctx.setLineDash([3, 3])
+  }
   ctx.beginPath()
   ctx.arc(s.x, s.y, ringR, 0, TAU)
   ctx.stroke()
   ctx.setLineDash([])
+  ctx.lineDashOffset = 0
+  ctx.lineCap = 'butt'
 
   if (selected) {
     ctx.strokeStyle = 'rgba(244,244,245,0.95)'
@@ -570,24 +698,58 @@ function drawPlanet(ctx: CanvasRenderingContext2D, agent: AgentSummary, sunS: { 
     }
   }
 
-  if (status === 'failed' && r >= 7) {
-    ctx.fillStyle = STATUS_COLOR.failed
-    ctx.beginPath()
-    ctx.arc(s.x + r * 0.72, s.y - r * 0.72, Math.max(3, r * 0.3), 0, TAU)
-    ctx.fill()
+  // Done and failed carry a glyph badge, so the outcome is a shape as well as a colour.
+  if ((status === 'failed' || status === 'completed') && r >= 7) {
+    drawStateBadge(ctx, s.x + r * 0.72, s.y - r * 0.72, Math.max(3.5, r * 0.3), status === 'failed' ? 'cross' : 'tick', color)
   }
 
   // Labels: always for the selected or hovered planet, and for the rest when zoomed in.
   if (selected || hovered || view.camera.zoom >= 0.85) {
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
-    ctx.font = '600 12px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
-    ctx.fillStyle = selected || hovered ? INK : 'rgba(244,244,245,0.82)'
+    // A thin dark outline keeps the text legible over bright nebula without a costly shadow blur.
+    ctx.lineJoin = 'round'
+    ctx.font = '600 14px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
+    ctx.lineWidth = 3
+    ctx.strokeStyle = 'rgba(9,9,11,0.7)'
+    ctx.strokeText(agent.name, s.x, s.y + ringR + 9)
+    ctx.fillStyle = selected || hovered ? INK : 'rgba(244,244,245,0.86)'
     ctx.fillText(agent.name, s.x, s.y + ringR + 9)
     ctx.font = '11px "Segoe UI", system-ui, sans-serif'
-    ctx.fillStyle = withAlpha(color, 0.92)
-    ctx.fillText(statusLabel(status, agent.statusDetail), s.x, s.y + ringR + 25)
+    ctx.lineWidth = 3
+    ctx.strokeStyle = 'rgba(9,9,11,0.7)'
+    const detail = statusLabel(status, agent.statusDetail)
+    ctx.strokeText(detail, s.x, s.y + ringR + 25)
+    ctx.fillStyle = withAlpha(color, 0.95)
+    ctx.fillText(detail, s.x, s.y + ringR + 25)
   }
+}
+
+/** A small glyph disc on a planet's shoulder: a tick for completed, a cross for failed. */
+function drawStateBadge(ctx: CanvasRenderingContext2D, x: number, y: number, rad: number, glyph: 'tick' | 'cross', color: string): void {
+  ctx.fillStyle = 'rgba(9,9,11,0.92)'
+  ctx.beginPath()
+  ctx.arc(x, y, rad + 1.5, 0, TAU)
+  ctx.fill()
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1.5
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  if (glyph === 'cross') {
+    const k = rad * 0.5
+    ctx.moveTo(x - k, y - k)
+    ctx.lineTo(x + k, y + k)
+    ctx.moveTo(x + k, y - k)
+    ctx.lineTo(x - k, y + k)
+  } else {
+    ctx.moveTo(x - rad * 0.55, y + rad * 0.05)
+    ctx.lineTo(x - rad * 0.1, y + rad * 0.5)
+    ctx.lineTo(x + rad * 0.6, y - rad * 0.45)
+  }
+  ctx.stroke()
+  ctx.lineCap = 'butt'
+  ctx.lineJoin = 'miter'
 }
 
 /** Per-frame light from the sun: a terminator that darkens away from it, a specular glint and a lit rim. */
@@ -754,52 +916,160 @@ function mixHex(a: string, b: string, t: number): string {
   return '#' + [16, 8, 0].map((shift) => channel(shift).toString(16).padStart(2, '0')).join('')
 }
 
-function drawMoon(
+/** Colour per kind of command, so a glance tells shell work from edits and reads. */
+const TOOL_COLOR: Record<ToolKind, string> = {
+  shell: '#facc15',
+  edit: '#f472b6',
+  write: '#fb923c',
+  read: '#7dd3fc',
+  search: '#c4b5fd',
+  web: '#34d399',
+  agent: '#f0abfc',
+  mcp: '#22d3ee',
+  other: MUTED,
+}
+const FAILED_ROCK = '#f87171'
+
+// ---- sub-agents -------------------------------------------------------------
+
+/** Sub-agent icons shown above a planet, newest on the right. */
+const MAX_SUB_ICONS = 4
+const SUB_ICON_R = 5
+
+/** Centres of an agent's sub-agent icons, in a row above its planet. */
+function subAgentIcons(agent: AgentSummary, s: { x: number; y: number }, r: number): { x: number; y: number; sub: SubAgent }[] {
+  const subs = (agent.subAgents ?? []).slice(-MAX_SUB_ICONS)
+  const gap = SUB_ICON_R * 2 + 5
+  const left = s.x - ((subs.length - 1) * gap) / 2
+  const y = s.y - r - 22
+  return subs.map((sub, i) => ({ x: left + i * gap, y, sub }))
+}
+
+/**
+ * A sub-agent as a small icon: a dark disc with a mini tilted ring. Amber while it works, with a
+ * satellite dot circling it, green when it finishes, red when it fails.
+ */
+function drawSubAgent(ctx: CanvasRenderingContext2D, x: number, y: number, sub: SubAgent, view: ViewState): void {
+  const running = sub.status === 'running'
+  const color = sub.status === 'error' ? FAILED_ROCK : running ? '#fbbf24' : '#34d399'
+  const pulse = view.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(view.now / 260)
+  const R = SUB_ICON_R
+
+  if (running) {
+    ctx.fillStyle = withAlpha(color, 0.18 + 0.2 * pulse)
+    ctx.beginPath()
+    ctx.arc(x, y, R * 2, 0, TAU)
+    ctx.fill()
+  }
+  ctx.fillStyle = withAlpha(CANVAS, 0.92)
+  ctx.beginPath()
+  ctx.arc(x, y, R, 0, TAU)
+  ctx.fill()
+  ctx.strokeStyle = withAlpha(color, 0.95)
+  ctx.lineWidth = 1.3
+  ctx.stroke()
+
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.rotate(RING_TILT)
+  ctx.strokeStyle = withAlpha(color, 0.9)
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.ellipse(0, 0, R * 0.85, R * 0.35, 0, 0, TAU)
+  ctx.stroke()
+  ctx.restore()
+
+  if (running) {
+    const a = view.reduced ? 0 : view.now / 180
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.arc(x + Math.cos(a) * (R + 3), y + Math.sin(a) * (R + 3), 1.2, 0, TAU)
+    ctx.fill()
+  }
+}
+
+/** Draws an agent's sub-agent icons above its planet, with a line naming what the newest running one is doing. */
+function drawSubAgents(ctx: CanvasRenderingContext2D, agent: AgentSummary, s: { x: number; y: number }, r: number, view: ViewState, zoom: number): void {
+  const icons = subAgentIcons(agent, s, r)
+  if (icons.length === 0) return
+  for (const icon of icons) drawSubAgent(ctx, icon.x, icon.y, icon.sub, view)
+
+  if (zoom < 0.6) return
+  const working = [...icons].reverse().find((i) => i.sub.status === 'running')
+  if (!working) return
+  const text = working.sub.detail || working.sub.name
+  ctx.fillStyle = withAlpha(MUTED, 0.95)
+  ctx.font = '600 9.5px "Segoe UI", system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'bottom'
+  ctx.fillText(text.length > 44 ? `${text.slice(0, 43)}…` : text, s.x, working.y - SUB_ICON_R - 5)
+}
+
+function drawRock(
   ctx: CanvasRenderingContext2D,
-  m: Moon,
+  k: Rock,
   planetScreen: { x: number; y: number },
   cam: Camera,
   w: number,
   h: number,
   view: ViewState,
 ): void {
-  const s = worldToScreen(cam, w, h, m.x, m.y)
-  if (!view.appearAt.has(m.key)) view.appearAt.set(m.key, view.now)
-  const scale = Math.max(0.001, m.appear)
-  const color = m.state === 'cluster' ? MUTED : STATUS_COLOR[m.state === 'writing' ? 'writing' : m.state === 'reading' ? 'reading' : 'idle']
+  const s = worldToScreen(cam, w, h, k.x, k.y)
+  if (!view.appearAt.has(k.key)) view.appearAt.set(k.key, view.now)
+  const scale = Math.max(0.001, k.appear)
+  const running = k.status === 'running'
+  const failed = k.status === 'error'
+  const color = failed ? FAILED_ROCK : TOOL_COLOR[k.kind]
   const pulse = view.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(view.now / 260)
 
   // Orbit trail back to the planet, drawn faintly.
-  ctx.strokeStyle = 'rgba(244,244,245,0.07)'
+  ctx.strokeStyle = 'rgba(244,244,245,0.09)'
   ctx.beginPath()
   ctx.moveTo(planetScreen.x, planetScreen.y)
   ctx.lineTo(s.x, s.y)
   ctx.stroke()
 
-  if (m.state === 'cluster') {
-    ctx.fillStyle = MUTED
-    ctx.font = '600 10px "Segoe UI", system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(`+${m.count}`, s.x, s.y)
-    return
-  }
-
-  const r = (m.state === 'writing' ? 4.2 + 1.2 * pulse : m.state === 'reading' ? 3.6 : 2.8) * scale
-  if (m.state === 'writing') {
-    ctx.fillStyle = withAlpha(color, (0.2 + 0.18 * pulse) * scale)
+  // A running command glows, so work in progress reads at a glance.
+  const R = ROCK_RADIUS * scale
+  if (running) {
+    ctx.fillStyle = withAlpha(color, (0.22 + 0.2 * pulse) * scale)
     ctx.beginPath()
-    ctx.arc(s.x, s.y, r * 2.6, 0, TAU)
+    ctx.arc(s.x, s.y, R * 2.4, 0, TAU)
     ctx.fill()
   }
-  // A tiny lit sphere: a highlight toward the upper left gives moons the same material as planets.
-  const grad = ctx.createRadialGradient(s.x - r * 0.35, s.y - r * 0.35, r * 0.1, s.x, s.y, r)
-  grad.addColorStop(0, withAlpha('#ffffff', (m.state === 'recent' ? 0.5 : 0.95) * scale))
-  grad.addColorStop(1, withAlpha(color, (m.state === 'recent' ? 0.4 : 0.85) * scale))
-  ctx.fillStyle = grad
+
+  // An irregular stone: seven vertices with seeded radii, so each rock has its own shape.
+  const rand = seeded(k.seed || 1)
+  const verts = 7
   ctx.beginPath()
-  ctx.arc(s.x, s.y, r, 0, TAU)
+  for (let i = 0; i < verts; i++) {
+    const a = (i / verts) * TAU
+    const rr = R * (0.72 + 0.4 * rand())
+    const px = s.x + Math.cos(a) * rr
+    const py = s.y + Math.sin(a) * rr
+    if (i === 0) ctx.moveTo(px, py)
+    else ctx.lineTo(px, py)
+  }
+  ctx.closePath()
+  // Lit from the upper left, like the planets; a dark outline keeps it visible on the nebula.
+  const grad = ctx.createRadialGradient(s.x - R * 0.35, s.y - R * 0.35, R * 0.1, s.x, s.y, R * 1.2)
+  grad.addColorStop(0, withAlpha('#ffffff', 0.85 * scale))
+  grad.addColorStop(0.45, withAlpha(color, 0.95 * scale))
+  grad.addColorStop(1, withAlpha(mixHex(color, '#000000', 0.45), 0.95 * scale))
+  ctx.fillStyle = grad
   ctx.fill()
+  ctx.strokeStyle = withAlpha('#0b0b10', 0.85 * scale)
+  ctx.lineWidth = 1
+  ctx.stroke()
+
+  // The command's name under the rock, once zoomed in enough to read it.
+  if (cam.zoom >= 0.6) {
+    ctx.fillStyle = withAlpha(failed ? FAILED_ROCK : MUTED, scale)
+    ctx.font = '600 9px "Segoe UI", system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    ctx.fillText(k.name, s.x, s.y + R + 3)
+  }
 }
 
 function drawBadge(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color: string): void {
@@ -816,7 +1086,7 @@ function drawBadge(ctx: CanvasRenderingContext2D, x: number, y: number, text: st
 
 // ---- hit testing ------------------------------------------------------------------
 
-/** Returns what is under a screen point. Topmost objects win: moons, then planets, then suns. */
+/** Returns what is under a screen point. Topmost objects win: rocks, then planets, then suns. */
 export function hitTest(view: ViewState, sx: number, sy: number): Hit | null {
   const { camera: cam, width: w, height: h, layout, agents } = view
 
@@ -825,13 +1095,18 @@ export function hitTest(view: ViewState, sx: number, sy: number): Hit | null {
       const p = layout.planets[i]
       const agent = agents.get(p.id)
       if (!agent) continue
-      // Moons orbit within MOON_ORBIT of their planet. Build them only for planets the pointer is near.
+      // Rocks orbit within ROCK_ORBIT of their planet. Build them only for planets the pointer is near.
       const c = planetScreen(view, p)
-      if (Math.hypot(c.x - sx, c.y - sy) > (MOON_ORBIT + 14) * cam.zoom + 8) continue
-      for (const m of moonsFor(agent, p, view)) {
-        const s = worldToScreen(cam, w, h, m.x, m.y)
-        if (Math.hypot(s.x - sx, s.y - sy) <= 8) {
-          return { kind: 'moon', agentId: agent.id, path: m.path, count: m.count }
+      if (Math.hypot(c.x - sx, c.y - sy) > (ROCK_ORBIT + 14) * cam.zoom + 8) continue
+      // A sub-agent icon belongs to its planet, so clicking it selects the planet.
+      const pc = planetScreen(view, p)
+      for (const icon of subAgentIcons(agent, pc, Math.max(5, PLANET_RADIUS * cam.zoom))) {
+        if (Math.hypot(icon.x - sx, icon.y - sy) <= SUB_ICON_R + 4) return { kind: 'planet', id: p.id }
+      }
+      for (const k of rocksFor(agent, p, view)) {
+        const s = worldToScreen(cam, w, h, k.x, k.y)
+        if (Math.hypot(s.x - sx, s.y - sy) <= ROCK_RADIUS + 4) {
+          return { kind: 'rock', agentId: agent.id, name: k.name }
         }
       }
     }
@@ -840,7 +1115,7 @@ export function hitTest(view: ViewState, sx: number, sy: number): Hit | null {
   for (let i = layout.planets.length - 1; i >= 0; i--) {
     const p = layout.planets[i]
     if (!agents.has(p.id)) continue
-    const pos = planetPosition(p, view.t)
+    const pos = planetPosition(p, view.t, cam.zoom)
     const s = worldToScreen(cam, w, h, pos.x, pos.y)
     const r = Math.max(9, PLANET_RADIUS * cam.zoom) + 6
     if (Math.hypot(s.x - sx, s.y - sy) <= r) return { kind: 'planet', id: p.id }
@@ -855,7 +1130,7 @@ export function hitTest(view: ViewState, sx: number, sy: number): Hit | null {
 
 /** Screen position of a planet now, for anchoring overlays. */
 export function planetScreen(view: ViewState, planet: Planet): { x: number; y: number } {
-  const pos = planetPosition(planet, view.t)
+  const pos = planetPosition(planet, view.t, view.camera.zoom)
   return worldToScreen(view.camera, view.width, view.height, pos.x, pos.y)
 }
 

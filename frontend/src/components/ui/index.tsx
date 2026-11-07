@@ -18,9 +18,10 @@ import {
   type TextareaHTMLAttributes,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { Status } from '../../types'
+import type { ModelOption, Status } from '../../types'
 import { DEFAULT_BODY, PROVIDER_BODY, STATUS_COLOR, STATUS_LABEL } from '../../lib/theme'
-import { IconCheck, IconChevronDown, IconX } from './icons'
+import { filterModels, groupModels } from '../../lib/modelSearch'
+import { IconCheck, IconChevronDown, IconSearch, IconX } from './icons'
 
 export * from './icons'
 
@@ -37,7 +38,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
       'inline-flex items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap select-none ' +
       'transition-[background-color,border-color,color,transform,opacity,box-shadow] duration-150 ease-out ' +
       'active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none motion-reduce:active:scale-100'
-    const sizes: Record<ButtonSize, string> = { sm: 'h-7 px-2.5 text-[12px]', md: 'h-8 px-3 text-[13px]' }
+    const sizes: Record<ButtonSize, string> = { sm: 'h-7 px-2.5 text-caption', md: 'h-8 px-3 text-body' }
     const variants: Record<ButtonVariant, string> = {
       primary: 'bg-ink text-canvas shadow-sm shadow-black/30 hover:bg-white [&_kbd]:border-black/10 [&_kbd]:bg-black/[0.06] [&_kbd]:text-canvas/70',
       secondary: 'border border-line bg-surface text-ink hover:border-line-strong hover:bg-hover',
@@ -52,14 +53,14 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
 export const floatingSurface = 'border border-white/[0.07] bg-popover/90 shadow-float backdrop-blur-md'
 
 export function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="rounded border border-line bg-white/[0.04] px-1.5 py-px font-mono text-[10px] leading-4 text-faint">{children}</kbd>
+  return <kbd className="rounded border border-line bg-white/[0.04] px-1.5 py-px font-mono text-label leading-4 text-faint">{children}</kbd>
 }
 
 export function StatusPill({ status, detail, compact = false }: { status: Status; detail?: string; compact?: boolean }) {
   const color = STATUS_COLOR[status]
   return (
     <span
-      className="inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+      className="inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-label font-medium"
       style={{ color, borderColor: `${color}33`, background: `${color}12` }}
       title={detail || STATUS_LABEL[status]}
     >
@@ -87,7 +88,7 @@ export function ProviderMark({ provider, size = 22 }: { provider: string; size?:
     >
       {body.logo ? (
         <svg viewBox="0 0 24 24" width={Math.round(size * 0.56)} height={Math.round(size * 0.56)} fill="rgba(9,9,11,0.8)" aria-hidden="true">
-          <path d={body.logo} />
+          <path d={body.logo} fillRule={body.logoRule ?? 'nonzero'} />
         </svg>
       ) : (
         body.mark
@@ -106,7 +107,7 @@ export function Tag({ children, tone = 'neutral' }: { children: ReactNode; tone?
     ok: 'border-ok/30 bg-ok/10 text-ok',
   }
   return (
-    <span className={`inline-flex items-center rounded border px-1.5 py-px text-[10px] font-medium uppercase leading-4 tracking-[0.06em] ${tones[tone]}`}>
+    <span className={`inline-flex items-center rounded border px-1.5 py-px text-label font-medium uppercase leading-4 tracking-[0.06em] ${tones[tone]}`}>
       {children}
     </span>
   )
@@ -115,18 +116,18 @@ export function Tag({ children, tone = 'neutral' }: { children: ReactNode; tone?
 export function Field({ label, hint, children, htmlFor, icon }: { label: string; hint?: string; children: ReactNode; htmlFor?: string; icon?: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <label htmlFor={htmlFor} className="flex items-center gap-1.5 text-[12px] font-medium text-muted">
+      <label htmlFor={htmlFor} className="flex items-center gap-1.5 text-caption font-medium text-muted">
         {icon && <span className="text-faint">{icon}</span>}
         {label}
       </label>
       {children}
-      {hint && <p className="text-[11px] leading-relaxed text-faint">{hint}</p>}
+      {hint && <p className="text-label leading-relaxed text-faint">{hint}</p>}
     </div>
   )
 }
 
 const fieldClass =
-  'w-full rounded-md border border-line bg-surface px-2.5 text-[13px] text-ink placeholder:text-faint ' +
+  'w-full rounded-md border border-line bg-surface px-2.5 text-body text-ink placeholder:text-faint ' +
   'outline-none transition-[border-color,box-shadow,background-color] duration-150 hover:border-line-strong ' +
   'focus:border-white/30 focus:bg-canvas focus:ring-[3px] focus:ring-white/[0.07] ' +
   'aria-invalid:border-danger/60 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line'
@@ -340,13 +341,17 @@ export function Select({
             id={listId}
             role="listbox"
             data-listbox-open=""
-            style={pos ? { left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom } : { left: 0, top: 0, visibility: 'hidden' }}
-            className="fixed z-[60] max-h-72 overflow-y-auto rounded-lg border border-white/[0.08] bg-popover p-1 shadow-popover animate-fade-in"
+            style={
+              pos
+                ? { left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, transformOrigin: pos.bottom !== undefined ? 'bottom' : 'top' }
+                : { left: 0, top: 0, visibility: 'hidden' }
+            }
+            className="fixed z-[60] max-h-72 overflow-y-auto rounded-lg border border-white/[0.08] bg-popover p-1 shadow-popover animate-menu-in"
           >
             {options.map((o, i) => (
               <Fragment key={i}>
                 {o.group && (i === 0 || options[i - 1].group !== o.group) && (
-                  <div role="presentation" className="px-2 pb-1 pt-2 text-[11px] font-medium text-faint">
+                  <div role="presentation" className="px-2 pb-1 pt-2 text-label font-medium text-faint">
                     {o.group}
                   </div>
                 )}
@@ -359,7 +364,7 @@ export function Select({
                   onMouseMove={() => !o.disabled && i !== active && setActive(i)}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => commit(i)}
-                  className={`flex h-8 items-center justify-between gap-2 rounded-md px-2 text-[13px] ${
+                  className={`flex h-8 items-center justify-between gap-2 rounded-md px-2 text-body ${
                     o.disabled ? 'cursor-not-allowed text-faint opacity-50' : 'cursor-pointer text-ink'
                   } ${i === active ? 'bg-white/[0.07]' : ''}`}
                 >
@@ -375,11 +380,301 @@ export function Select({
   )
 }
 
+type PickerPos = { left: number; width: number; top?: number; bottom?: number }
+
+/**
+ * Model chooser: a searchable, grouped list of one provider's models. The provider's own default
+ * is the first row. Focus moves into the search box when it opens. Arrow keys move, Enter picks,
+ * Escape or Tab closes. It only lists models the provider reports, and never invents one.
+ */
+export function ModelPicker({
+  id,
+  value,
+  onChange,
+  models,
+  provider,
+  defaultLabel,
+  disabled,
+  'aria-label': ariaLabel,
+}: {
+  id?: string
+  value: string
+  onChange: (modelId: string) => void
+  models: ModelOption[]
+  provider: string
+  defaultLabel: string
+  disabled?: boolean
+  'aria-label'?: string
+}) {
+  const listId = useId()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [active, setActive] = useState(0)
+  const [pos, setPos] = useState<PickerPos | null>(null)
+
+  const selected = models.find((m) => m.id === value)
+  const groups = useMemo(() => groupModels(filterModels(models, query)), [models, query])
+  // The provider default is offered only when nothing is typed, so it never hides a search result.
+  const rows = useMemo<(ModelOption | null)[]>(
+    () => [...(query.trim() === '' ? [null] : []), ...groups.flatMap((g) => g.items)],
+    [groups, query],
+  )
+  const matchCount = rows.length - (query.trim() === '' ? 1 : 0)
+
+  const openList = () => {
+    if (disabled) return
+    setQuery('')
+    const start = value ? [null, ...groupModels(models).flatMap((g) => g.items)].findIndex((m) => m?.id === value) : 0
+    setActive(Math.max(0, start))
+    setPos(null)
+    setOpen(true)
+  }
+
+  const close = () => {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  const commit = (i: number) => {
+    if (i < 0 || i >= rows.length) return
+    onChange(rows[i]?.id ?? '')
+    close()
+  }
+
+  // Focus the search box once the list is mounted.
+  useEffect(() => {
+    if (open) inputRef.current?.focus()
+  }, [open])
+
+  // Place the list under the trigger, or above it when there is no room below.
+  useLayoutEffect(() => {
+    if (!open) return
+    const trigger = triggerRef.current
+    const list = listRef.current
+    if (!trigger || !list) return
+    const r = trigger.getBoundingClientRect()
+    const below = window.innerHeight - r.bottom
+    const flip = below < list.offsetHeight + 8 && r.top > below
+    setPos({ left: r.left, width: Math.max(r.width, 280), ...(flip ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }) })
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [open, active])
+
+  // Close on an outside pointer, and when the page scrolls or resizes.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node
+      if (triggerRef.current?.contains(t) || listRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    const onScroll = (e: Event) => {
+      if (listRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    const onResize = () => setOpen(false)
+    document.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onResize)
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [open])
+
+  const onInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    const n = rows.length
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        if (n) setActive((i) => (i + 1) % n)
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        if (n) setActive((i) => (i - 1 + n) % n)
+        break
+      case 'Enter':
+        e.preventDefault()
+        commit(active)
+        break
+      case 'Escape':
+        e.preventDefault()
+        e.stopPropagation()
+        close()
+        break
+      case 'Tab':
+        setOpen(false)
+        break
+    }
+  }
+
+  let rowIndex = -1
+  const rowId = (i: number) => `${listId}-${i}`
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        id={id}
+        type="button"
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={() => (open ? setOpen(false) : openList())}
+        onKeyDown={(e) => {
+          if (!open && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault()
+            openList()
+          }
+        }}
+        className={`${fieldClass} flex h-8 cursor-pointer items-center justify-between gap-2 pl-2.5 pr-2 text-left disabled:cursor-not-allowed disabled:opacity-50`}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <ProviderMark provider={provider} size={14} />
+          <span className="truncate">{selected ? selected.label : defaultLabel}</span>
+        </span>
+        <IconChevronDown size={14} className={`shrink-0 text-faint transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open &&
+        createPortal(
+          <div
+            ref={listRef}
+            data-listbox-open=""
+            style={pos ? { left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom } : { left: 0, top: 0, visibility: 'hidden' }}
+            className="fixed z-[60] flex max-h-96 flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-popover shadow-popover animate-fade-in"
+          >
+            <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+              <IconSearch size={13} className="shrink-0 text-faint" />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setActive(0)
+                }}
+                onKeyDown={onInputKeyDown}
+                placeholder="Search models"
+                aria-label="Search models"
+                role="combobox"
+                aria-expanded
+                aria-controls={listId}
+                aria-activedescendant={rows.length ? rowId(active) : undefined}
+                autoComplete="off"
+                spellCheck={false}
+                className="min-w-0 flex-1 bg-transparent text-body text-ink placeholder:text-faint outline-none"
+              />
+            </div>
+            <div id={listId} role="listbox" aria-label={`${provider} models`} className="min-h-0 flex-1 overflow-y-auto p-1">
+              {rows.length === 0 && (
+                <div className="px-3 py-6 text-center text-caption text-faint">
+                  No models match “{query.trim()}”.
+                </div>
+              )}
+              {query.trim() === '' && (
+                <ModelRow
+                  id={rowId(0)}
+                  index={0}
+                  active={active === 0}
+                  selected={value === ''}
+                  label={defaultLabel}
+                  detail="Chosen by the provider"
+                  onHover={() => setActive(0)}
+                  onPick={() => commit(0)}
+                />
+              )}
+              {groups.map((g) => (
+                <div key={g.group} role="group" aria-label={g.group}>
+                  <div role="presentation" className="px-2 pb-1 pt-2 text-label font-medium text-faint">
+                    {g.group}
+                  </div>
+                  {g.items.map((m) => {
+                    rowIndex += 1
+                    const i = rowIndex + (query.trim() === '' ? 1 : 0)
+                    return (
+                      <ModelRow
+                        key={m.id}
+                        id={rowId(i)}
+                        index={i}
+                        active={active === i}
+                        selected={m.id === value}
+                        label={m.label}
+                        detail={m.description}
+                        onHover={() => setActive(i)}
+                        onPick={() => commit(i)}
+                      />
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+            {query.trim() !== '' && matchCount > 0 && (
+              <div className="border-t border-line px-3 py-1.5 text-label tabular-nums text-faint">
+                {matchCount} match{matchCount === 1 ? '' : 'es'}
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
+    </>
+  )
+}
+
+function ModelRow({
+  id,
+  index,
+  active,
+  selected,
+  label,
+  detail,
+  onHover,
+  onPick,
+}: {
+  id: string
+  index: number
+  active: boolean
+  selected: boolean
+  label: string
+  detail: string
+  onHover: () => void
+  onPick: () => void
+}) {
+  return (
+    <div
+      id={id}
+      role="option"
+      aria-selected={selected}
+      data-index={index}
+      onMouseMove={() => !active && onHover()}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onPick}
+      className={`flex cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-1.5 transition-colors duration-100 ${
+        active ? 'bg-row-active' : ''
+      }`}
+    >
+      <span className="min-w-0">
+        <span className={`block truncate text-body leading-tight ${selected ? 'font-semibold text-ink' : 'font-medium text-ink/90'}`}>{label}</span>
+        {detail && <span className="mt-0.5 block truncate text-label leading-snug text-faint">{detail}</span>}
+      </span>
+      {selected && <IconCheck size={12} className="shrink-0 text-muted" />}
+    </div>
+  )
+}
+
 export function Spinner({ label }: { label?: string }) {
   return (
     <span className="inline-flex items-center gap-2 text-muted" role="status">
       <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/15 border-t-white/70 motion-reduce:animate-none" />
-      {label && <span className="text-[12px]">{label}</span>}
+      {label && <span className="text-caption">{label}</span>}
     </span>
   )
 }
@@ -388,8 +683,8 @@ export function EmptyState({ title, body, action, icon }: { title: string; body:
   return (
     <div className="flex max-w-sm flex-col items-center text-center">
       {icon && <div className="mb-5 text-faint">{icon}</div>}
-      <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">{title}</h2>
-      <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{body}</p>
+      <h2 className="text-title font-semibold tracking-[-0.01em] text-ink">{title}</h2>
+      <p className="mt-1.5 text-body leading-relaxed text-muted">{body}</p>
       {action && <div className="mt-5">{action}</div>}
     </div>
   )
@@ -458,20 +753,20 @@ export function Dialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <div className="absolute inset-0 animate-fade-in bg-black/60 backdrop-blur-[3px] motion-reduce:animate-none" onClick={onClose} aria-hidden="true" />
+      <div className="dialog-scrim absolute inset-0 animate-fade-in bg-black/60 backdrop-blur-[3px] motion-reduce:animate-none" onClick={onClose} aria-hidden="true" />
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`relative flex max-h-[86vh] w-full ${width} animate-dialog-in flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-popover shadow-popover motion-reduce:animate-none`}
+        className={`dialog-panel relative flex max-h-[86vh] w-full ${width} animate-dialog-in flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-popover shadow-popover motion-reduce:animate-none`}
       >
         <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-3.5">
           <div className="min-w-0">
-            <h2 id={titleId} className="text-[14px] font-semibold tracking-[-0.01em] text-ink">
+            <h2 id={titleId} className="text-title font-semibold tracking-[-0.01em] text-ink">
               {title}
             </h2>
-            {description && <p className="mt-0.5 text-[12px] leading-relaxed text-muted">{description}</p>}
+            {description && <p className="mt-0.5 text-caption leading-relaxed text-muted">{description}</p>}
           </div>
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close dialog" className="-mr-1.5 h-7 w-7 shrink-0 rounded-md px-0">
             <IconX size={14} />

@@ -129,8 +129,22 @@ func lookPath(name string) (string, bool) {
 			return cached, true
 		}
 	}
-	for _, candidate := range pathCandidates(name) {
-		if probeCLI(candidate) {
+	// Probe every candidate at once. A hung shim then costs one probe timeout, not one per
+	// candidate, and the snapshot that the window waits on stays short. PATH order still decides
+	// the winner.
+	candidates := pathCandidates(name)
+	works := make([]bool, len(candidates))
+	var wg sync.WaitGroup
+	for i, candidate := range candidates {
+		wg.Add(1)
+		go func(i int, candidate string) {
+			defer wg.Done()
+			works[i] = probeCLI(candidate)
+		}(i, candidate)
+	}
+	wg.Wait()
+	for i, candidate := range candidates {
+		if works[i] {
 			resolvedMu.Lock()
 			resolved[name] = candidate
 			resolvedMu.Unlock()
@@ -176,7 +190,7 @@ func pathCandidates(name string) []string {
 
 // probeCLI reports whether path runs and exits 0 for `--version`.
 func probeCLI(path string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--version")
 	configureProcess(cmd)

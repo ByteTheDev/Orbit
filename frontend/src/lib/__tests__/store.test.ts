@@ -3,16 +3,16 @@ import { applyEvents, applySnapshot, getState, setDetail, setState } from '../st
 import type { AgentSummary, OrbitEvent, ProjectSummary } from '../../types'
 
 const project: ProjectSummary = {
-  id: 'p1', name: 'App', repoPath: 'C:/app', createdAt: 1, agentCount: 0, runningCount: 0, conflicts: [],
+  id: 'p1', name: 'App', repoPath: 'C:/app', createdAt: 1, agentCount: 0, runningCount: 0, conflicts: [], handoffs: [], conversations: [],
 }
 
 function agent(overrides: Partial<AgentSummary> = {}): AgentSummary {
   return {
     id: 'a1', projectId: 'p1', name: 'Alpha', provider: 'claude', providerName: 'Claude Code',
-    model: '', task: '', permissionMode: '', status: 'idle', statusDetail: '', sessionId: '', running: false,
+    model: '', task: '', permissionMode: '', status: 'idle', statusDetail: '', sessionId: '', running: false, fastMode: false, effort: '',
     createdAt: 2, updatedAt: 2, runStartedAt: 0, turns: 0, toolCalls: 0,
     usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0 }, lastError: '',
-    fileCount: 0, writeCount: 0, issueCount: 0, recentFiles: [],
+    fileCount: 0, writeCount: 0, issueCount: 0, recentFiles: [], recentTools: [], subAgents: [],
     capabilities: { stop: true, resume: true, send: true, cost: true, streaming: true, permissionModes: [] },
     ...overrides,
   }

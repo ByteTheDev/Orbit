@@ -1,16 +1,24 @@
-import { useMemo, useState, type KeyboardEvent } from 'react'
-import { useStore, openDialog, setState, toast } from '../lib/store'
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useStore, openDialog, setSidebar, setState, toast } from '../lib/store'
 import { errorText } from '../lib/bridge'
+import { SIDEBAR_RAIL } from '../lib/sidebarPrefs'
+import { isResolved, markResolved } from '../lib/conflictResolution'
 import type { AgentSummary } from '../types'
 import { ContextMenu, type MenuItem } from './ContextMenu'
+import { ActiveAgents } from './navigation/ActiveAgents'
+import { agentBucket, type AgentBucket } from './navigation/agentStatus'
 import { ProjectItem } from './navigation/ProjectItem'
-import { buildNavProjects, groupAgents, normaliseQuery } from './navigation/projectFilter'
+import { ProjectRail } from './navigation/ProjectRail'
+import { ResizeHandle } from './navigation/ResizeHandle'
+import { SidebarFilters } from './navigation/SidebarFilters'
 import { Tooltip } from './navigation/Tooltip'
-import { Button, IconAlert, IconPencil, IconPlus, IconTrash, IconFolder } from './ui'
+import { buildNavProjects, groupAgents, isFiltering, providersIn, type NavFilter } from './navigation/projectFilter'
+import { Button, IconAlert, IconPencil, IconPlus, IconTrash, IconFolder, IconSidebar } from './ui'
 
 interface Props {
   onFocusProject: (projectId: string) => void
   onFocusAgent: (agentId: string) => void
+  onOpenAgentMenu: (agentId: string, x: number, y: number) => void
 }
 
 interface MenuState {
@@ -19,12 +27,16 @@ interface MenuState {
   y: number
 }
 
+const EMPTY_COUNTS: Record<AgentBucket, number> = { running: 0, attention: 0, done: 0, idle: 0 }
+
 /**
- * Left panel: every project as an expandable group, a filter for long lists, and the
- * active project's file conflicts. Arrow keys move through the list; Left and Right
- * collapse and expand a project.
+ * Left panel: a command centre for projects and agents. From the top: a count and collapse
+ * control, search with status and provider chips, an Active strip of agents that are running or
+ * need attention, then the project hierarchy with its conflicts. The panel resizes from its right
+ * edge and can collapse to a rail of project marks. Arrow keys move through the list; Left and
+ * Right collapse and expand a project.
  */
-export function ProjectsPanel({ onFocusProject, onFocusAgent }: Props) {
+export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }: Props) {
   const projectOrder = useStore((s) => s.projectOrder)
   const projects = useStore((s) => s.projects)
   const activeId = useStore((s) => s.activeProjectId)
@@ -32,18 +44,29 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent }: Props) {
   const agentOrder = useStore((s) => s.agentOrder)
   const selectedId = useStore((s) => s.selectedId)
   const loading = useStore((s) => s.loading)
+  const sidebarWidth = useStore((s) => s.sidebarWidth)
+  const collapsed = useStore((s) => s.sidebarCollapsed)
 
   const [query, setQuery] = useState('')
+  const [provider, setProvider] = useState<string | null>(null)
+  const [bucket, setBucket] = useState<AgentBucket | null>(null)
   // Only changes the user has made. Otherwise a project is expanded when it is the active one.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({})
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const asideRef = useRef<HTMLElement>(null)
 
-  const filtering = normaliseQuery(query) !== ''
-  const agentsByProject = useMemo(
-    () => groupAgents(agentOrder.map((id) => agents[id]).filter((a): a is AgentSummary => !!a)),
-    [agentOrder, agents],
-  )
-  const rows = useMemo(() => buildNavProjects(projectOrder, projects, agentsByProject, query), [projectOrder, projects, agentsByProject, query])
+  const agentList = useMemo(() => agentOrder.map((id) => agents[id]).filter((a): a is AgentSummary => !!a), [agentOrder, agents])
+  const agentsByProject = useMemo(() => groupAgents(agentList), [agentList])
+  const providers = useMemo(() => providersIn(agentList), [agentList])
+  const bucketCounts = useMemo(() => {
+    const counts = { ...EMPTY_COUNTS }
+    for (const a of agentList) counts[agentBucket(a.status)]++
+    return counts
+  }, [agentList])
+
+  const filter: NavFilter = useMemo(() => ({ query, provider, bucket }), [query, provider, bucket])
+  const filtering = isFiltering(filter)
+  const rows = useMemo(() => buildNavProjects(projectOrder, projects, agentsByProject, filter), [projectOrder, projects, agentsByProject, filter])
 
   const isExpanded = (id: string) => (filtering ? true : (overrides[id] ?? id === activeId))
   const toggle = (id: string) => setOverrides((prev) => ({ ...prev, [id]: !isExpanded(id) }))
@@ -55,6 +78,12 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent }: Props) {
     setState({ activeProjectId: id })
     setOverrides((prev) => ({ ...prev, [id]: true }))
     onFocusProject(id)
+  }
+
+  const resetFilters = () => {
+    setQuery('')
+    setProvider(null)
+    setBucket(null)
   }
 
   const onNavKey = (e: KeyboardEvent<HTMLElement>) => {
@@ -79,96 +108,137 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent }: Props) {
       ]
     : []
 
+  const railRows = useMemo(
+    () =>
+      projectOrder
+        .map((id) => projects[id])
+        .filter((p): p is NonNullable<typeof p> => !!p)
+        .map((project) => ({ project, agents: agentsByProject.get(project.id) ?? [] })),
+    [projectOrder, projects, agentsByProject],
+  )
+
+  const countLabel = filtering ? `${rows.length} of ${projectOrder.length}` : `${projectOrder.length}`
+
   return (
-    <aside className="flex h-full w-[272px] shrink-0 flex-col border-r border-line bg-sidebar max-[900px]:w-[236px]" aria-label="Projects">
-      <header className="flex items-center justify-between gap-2 px-4 pb-2.5 pt-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Projects</h2>
-          <span className="rounded-md bg-white/[0.05] px-1.5 py-px text-[10px] font-medium tabular-nums text-muted" aria-label={`${projectOrder.length} projects`}>
-            {loading && projectOrder.length === 0 ? '…' : projectOrder.length}
-          </span>
-        </div>
-        <Tooltip label="New project" shortcut="P" align="end">
-          <Button variant="secondary" size="sm" onClick={() => openDialog({ kind: 'project' })} aria-label="New project" className="h-7 rounded-full px-3">
-            <IconPlus size={12} />
-            New
-          </Button>
-        </Tooltip>
-      </header>
+    <aside
+      ref={asideRef}
+      style={{ width: collapsed ? SIDEBAR_RAIL : sidebarWidth }}
+      className="relative flex h-full max-w-[60vw] shrink-0 animate-slide-in-left flex-col border-r border-line bg-sidebar"
+      aria-label="Projects"
+    >
+      {collapsed ? (
+        <ProjectRail
+          rows={railRows}
+          activeId={activeId}
+          onSelect={onFocusProject}
+          onExpand={() => setSidebar({ collapsed: false })}
+          onKeyDown={onNavKey}
+        />
+      ) : (
+        <>
+          <header className="flex items-center justify-between gap-2 px-4 pb-3 pt-4">
+            <div className="flex min-w-0 items-baseline gap-2">
+              <h2 className="text-label font-semibold uppercase tracking-[0.12em] text-faint">Projects</h2>
+              {projectOrder.length > 0 && (
+                <span className="text-label font-medium tabular-nums text-faint" aria-label={`${countLabel} projects shown`}>
+                  {loading && projectOrder.length === 0 ? '…' : countLabel}
+                </span>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setSidebar({ collapsed: true })}
+                aria-label="Collapse sidebar"
+                title="Collapse sidebar"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-white/[0.06] hover:text-ink"
+              >
+                <IconSidebar size={13} />
+              </button>
+              <Tooltip label="New project" shortcut="P" align="end">
+                <Button variant="ghost" size="sm" onClick={() => openDialog({ kind: 'project' })} aria-label="New project" className="-mr-1.5 h-7 gap-1 rounded-md px-2 text-caption text-muted hover:text-ink">
+                  <IconPlus size={11} />
+                  New
+                </Button>
+              </Tooltip>
+            </div>
+          </header>
 
-      {projectOrder.length > 0 && (
-        <div className="px-3 pb-2">
-          <label className="relative block">
-            <span className="sr-only">Filter projects and agents</span>
-            <SearchIcon />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape' && query) {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setQuery('')
-                }
-              }}
-              placeholder="Filter projects and agents"
-              className="h-8 w-full rounded-md border border-line bg-surface/60 pl-8 pr-2.5 text-[12px] text-ink placeholder:text-faint outline-none transition-[border-color,background-color,box-shadow] duration-150 hover:border-line-strong focus:border-white/30 focus:bg-canvas focus:ring-[3px] focus:ring-white/[0.07] [&::-webkit-search-cancel-button]:hidden"
+          {projectOrder.length > 0 && (
+            <SidebarFilters
+              query={query}
+              onQuery={setQuery}
+              provider={provider}
+              providers={providers}
+              onProvider={setProvider}
+              bucket={bucket}
+              bucketCounts={bucketCounts}
+              onBucket={setBucket}
+              onReset={resetFilters}
             />
-          </label>
-        </div>
+          )}
+
+          {!filtering && projectOrder.length > 0 && <ActiveAgents agents={agentList} projects={projects} selectedId={selectedId} onFocusAgent={onFocusAgent} />}
+
+          <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="Project list" aria-busy={loading && projectOrder.length === 0} onKeyDown={onNavKey}>
+            {loading && projectOrder.length === 0 && <SkeletonRows />}
+
+            {!loading && projectOrder.length === 0 && (
+              <div className="flex flex-col items-center px-5 pb-6 pt-12 text-center">
+                <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-white/[0.02] text-faint">
+                  <IconFolder size={16} />
+                </span>
+                <p className="text-body font-semibold text-ink">No projects yet</p>
+                <p className="mt-1.5 text-caption leading-relaxed text-muted">A project is a repository folder. Agents work inside one.</p>
+                <Button variant="secondary" size="sm" onClick={() => openDialog({ kind: 'project' })} className="mt-5 rounded-full px-3.5">
+                  <IconPlus size={11} />
+                  Add a project
+                </Button>
+              </div>
+            )}
+
+            {projectOrder.length > 0 && rows.length === 0 && (
+              <div className="px-4 py-12 text-center">
+                <p className="text-body text-ink/85">{query.trim() ? `No matches for “${query.trim()}”` : 'Nothing matches these filters'}</p>
+                <button type="button" onClick={resetFilters} className="mt-2 text-caption text-muted underline-offset-4 transition-colors hover:text-ink hover:underline">
+                  Clear search and filters
+                </button>
+              </div>
+            )}
+
+            {rows.length > 0 && (
+              <ul role="list" className="space-y-0.5">
+                {rows.map((row) => (
+                  <ProjectItem
+                    key={row.project.id}
+                    nav={row}
+                    active={row.project.id === activeId}
+                    expanded={isExpanded(row.project.id)}
+                    selectedAgentId={selectedId}
+                    onToggle={() => toggle(row.project.id)}
+                    onSelect={() => selectProject(row.project.id)}
+                    onFocusAgent={onFocusAgent}
+                    onContextMenu={(x, y) => setMenu({ projectId: row.project.id, x, y })}
+                    onAgentContextMenu={onOpenAgentMenu}
+                  />
+                ))}
+              </ul>
+            )}
+
+            {!filtering && activeProject && activeProject.conflicts.length > 0 && (
+              <ConflictList projectId={activeProject.id} conflicts={activeProject.conflicts} />
+            )}
+          </nav>
+
+          <ResizeHandle
+            width={sidebarWidth}
+            onPreview={(w) => {
+              if (asideRef.current) asideRef.current.style.width = `${w}px`
+            }}
+            onCommit={(w) => setSidebar({ width: w })}
+          />
+        </>
       )}
-
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="Project list" aria-busy={loading && projectOrder.length === 0} onKeyDown={onNavKey}>
-        {loading && projectOrder.length === 0 && <SkeletonRows />}
-
-        {!loading && projectOrder.length === 0 && (
-          <div className="flex flex-col items-center px-4 pb-6 pt-10 text-center">
-            <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-line text-faint">
-              <IconFolder size={16} />
-            </span>
-            <p className="text-[13px] font-medium text-ink">No projects yet</p>
-            <p className="mt-1 text-[12px] leading-relaxed text-faint">A project is a repository folder. Agents work inside one.</p>
-            <Button variant="secondary" size="sm" onClick={() => openDialog({ kind: 'project' })} className="mt-4 rounded-full px-3.5">
-              <IconPlus size={12} />
-              Add a project
-            </Button>
-          </div>
-        )}
-
-        {projectOrder.length > 0 && rows.length === 0 && (
-          <div className="px-4 py-10 text-center">
-            <p className="text-[13px] text-ink/85">No matches for “{query.trim()}”</p>
-            <button type="button" onClick={() => setQuery('')} className="mt-2 text-[12px] text-muted underline-offset-4 hover:text-ink hover:underline">
-              Clear filter
-            </button>
-          </div>
-        )}
-
-        {rows.length > 0 && (
-          <ul role="list" className="space-y-0.5">
-            {rows.map((row) => (
-              <ProjectItem
-                key={row.project.id}
-                nav={row}
-                active={row.project.id === activeId}
-                expanded={isExpanded(row.project.id)}
-                selectedAgentId={selectedId}
-                onToggle={() => toggle(row.project.id)}
-                onSelect={() => selectProject(row.project.id)}
-                onFocusAgent={onFocusAgent}
-                onContextMenu={(x, y) => setMenu({ projectId: row.project.id, x, y })}
-              />
-            ))}
-          </ul>
-        )}
-
-        {!filtering && activeProject && activeProject.conflicts.length > 0 && <ConflictList conflicts={activeProject.conflicts} />}
-      </nav>
-
-      <footer className="border-t border-line px-4 py-2.5">
-        <p className="text-[11px] leading-relaxed text-faint">Orbit runs agents through the Claude Code and Codex CLIs.</p>
-      </footer>
 
       {menu && menuProject && (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} label={`Actions for ${menuProject.name}`} />
@@ -184,25 +254,6 @@ async function copyPath(path: string): Promise<void> {
   } catch (err) {
     toast(errorText(err), 'error')
   }
-}
-
-function SearchIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      aria-hidden="true"
-      className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint"
-    >
-      <circle cx="11" cy="11" r="6.5" />
-      <path d="m20 20-4.2-4.2" />
-    </svg>
-  )
 }
 
 /** Placeholder rows shown while the first snapshot loads. Same height as real rows, so nothing jumps. */
@@ -222,20 +273,39 @@ function SkeletonRows() {
   )
 }
 
-function ConflictList({ conflicts }: { conflicts: { path: string; agents: { id: string; name: string }[] }[] }) {
+/** localStorage, or undefined where storage is blocked. */
+function safeStorage(): Storage | undefined {
+  try {
+    return window.localStorage
+  } catch {
+    return undefined
+  }
+}
+
+function ConflictList({ projectId, conflicts }: { projectId: string; conflicts: { path: string; agents: { id: string; name: string }[] }[] }) {
+  // Bumped on dismiss so the component re-reads the stored state and hides itself.
+  const [, setTick] = useState(0)
+  if (isResolved(safeStorage(), projectId, conflicts)) return null
+  const resolveAll = () => {
+    markResolved(safeStorage(), projectId, conflicts)
+    setTick((n) => n + 1)
+  }
   return (
-    <section className="mx-1 mt-4 rounded-lg bg-warn/[0.06] p-3" aria-label="Possible conflicts">
-      <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-warn-soft">
-        <IconAlert size={12} />
+    <section className="mx-1 mt-4 rounded-lg bg-warn/[0.05] px-3 py-2.5 ring-1 ring-inset ring-warn/15" aria-label="Possible conflicts">
+      <h3 className="mb-2 flex items-center gap-1.5 text-label font-semibold text-warn-soft">
+        <IconAlert size={11} />
         Possible conflicts
       </h3>
+      <Button size="sm" variant="ghost" className="mb-2 w-full" onClick={resolveAll}>
+        Resolve all conflicts
+      </Button>
       <ul className="space-y-2">
         {conflicts.map((c) => (
-          <li key={c.path} className="text-[12px]">
-            <span className="block truncate font-mono text-[11px] text-ink/85" title={c.path}>
+          <li key={c.path} className="text-caption">
+            <span className="block truncate font-mono text-label text-ink/85" title={c.path}>
               {c.path}
             </span>
-            <span className="block truncate text-[11px] text-faint">Written by {c.agents.map((a) => a.name).join(', ')}</span>
+            <span className="block truncate text-label text-faint">Written by {c.agents.map((a) => a.name).join(', ')}</span>
           </li>
         ))}
       </ul>

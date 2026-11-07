@@ -1,36 +1,74 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { useStore, setInspectorTab, selectAgent, openDialog, toast, type InspectorTab } from '../../lib/store'
+import { INSPECTOR_DEFAULT, INSPECTOR_MAX, INSPECTOR_MIN, clampInspectorWidth, loadInspectorWidth, saveInspectorWidth } from '../../lib/inspectorPrefs'
 import { loadDetail, renameAgent, resumeAgent, stopAgent } from '../../lib/actions'
-import { baseName, clock, dirName, elapsed, plural, tokens, timeAgo, usd } from '../../lib/format'
+import { baseName, dirName, elapsed, plural, tokens, timeAgo, usd } from '../../lib/format'
 import { STATUS_COLOR } from '../../lib/theme'
-import type { ActivityEntry, AgentSummary, Capabilities, FileActivity, Issue, ToolCall, Usage } from '../../types'
-import { Button, IconAlert, IconChat, IconFiles, IconInfo, IconPencil, IconPlay, IconSidebar, IconStop, IconText, IconTrash, IconX, ProviderMark, StatusPill, Tag, type IconProps } from '../ui'
-import { ChatTab, CodeBlock } from './ChatTab'
-import { IconRetry } from './inspectorIcons'
+import type { AgentSummary, Capabilities, FileActivity, Usage } from '../../types'
+import { Button, IconAlert, IconChat, IconFiles, IconInfo, IconPencil, IconPlay, IconStop, IconTrash, IconX, ProviderMark, StatusPill, Tag, type IconProps } from '../ui'
+import { ChatTab } from './ChatTab'
+import { IconBranch, IconRetry } from './inspectorIcons'
+import { GitTab } from './GitTab'
 import { VirtualList } from './VirtualList'
 
 const TABS: { id: InspectorTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'chat', label: 'Chat' },
-  { id: 'activity', label: 'Activity' },
   { id: 'files', label: 'Files' },
-  { id: 'tools', label: 'Tools' },
-  { id: 'issues', label: 'Issues' },
+  { id: 'changes', label: 'Changes' },
 ]
 
 const TAB_ICONS: Record<InspectorTab, (p: IconProps) => ReactNode> = {
   overview: (p) => <IconInfo {...p} />,
   chat: (p) => <IconChat {...p} />,
-  activity: (p) => <IconSidebar {...p} />,
   files: (p) => <IconFiles {...p} />,
-  tools: (p) => <IconText {...p} />,
-  issues: (p) => <IconAlert {...p} />,
+  changes: (p) => <IconBranch {...p} />,
 }
 
 const PANEL_ID = 'inspector-panel'
-const WIDTH = 400
-
 export function Inspector() {
+  // The panel's width is set by dragging its left edge. It is remembered between launches.
+  const [width, setWidth] = useState(loadInspectorWidth)
+  const [resizing, setResizing] = useState(false)
+  const panelRef = useRef<HTMLElement>(null)
+  const drag = useRef<{ startX: number; startWidth: number; last: number } | null>(null)
+
+  const commitWidth = (next: number) => {
+    const w = clampInspectorWidth(next)
+    setWidth(w)
+    saveInspectorWidth(w)
+  }
+  // Dragging left widens the panel, because the panel sits on the right.
+  const resizeDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    drag.current = { startX: e.clientX, startWidth: width, last: width }
+    setResizing(true)
+  }
+  const resizeMove = (e: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    if (!d) return
+    d.last = clampInspectorWidth(d.startWidth + (d.startX - e.clientX))
+    // Preview through the CSS variable, so the inspector does not re-render on every pointer move.
+    panelRef.current?.style.setProperty('--inspector-w', `${d.last}px`)
+  }
+  const resizeEnd = (e: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    if (!d) return
+    drag.current = null
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    setResizing(false)
+    if (d.last !== width) commitWidth(d.last)
+  }
+  const resizeKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const next =
+      e.key === 'ArrowLeft' ? width + 16 : e.key === 'ArrowRight' ? width - 16 : e.key === 'Home' ? INSPECTOR_MIN : e.key === 'End' ? INSPECTOR_MAX : null
+    if (next === null) return
+    e.preventDefault()
+    commitWidth(next)
+  }
+
   const selectedId = useStore((s) => s.selectedId)
   const open = useStore((s) => s.inspectorOpen)
   const tab = useStore((s) => s.inspectorTab)
@@ -44,6 +82,14 @@ export function Inspector() {
   const rawAgent = selectedAgent ?? lastAgent.current
   const agent = useMemo(() => (rawAgent ? withDefaults(rawAgent) : undefined), [rawAgent])
   const agentId = agent?.id
+
+  // Measure the selected tab so the sliding indicator can travel to it. Re-measured when the panel resizes.
+  const tabEls = useRef<Partial<Record<InspectorTab, HTMLButtonElement | null>>>({})
+  const [bar, setBar] = useState<{ left: number; width: number } | null>(null)
+  useLayoutEffect(() => {
+    const el = tabEls.current[tab]
+    if (el) setBar({ left: el.offsetLeft, width: el.offsetWidth })
+  }, [tab, width, shown])
 
   const detail = useStore((s) => (agentId ? s.details[agentId] : undefined))
   const detailError = useStore((s) => (agentId ? s.detailErrors[agentId] : undefined))
@@ -59,10 +105,8 @@ export function Inspector() {
   const counts: Record<InspectorTab, number | undefined> = {
     overview: undefined,
     chat: detail?.messages.length,
-    activity: detail?.activity.length,
     files: agent.fileCount,
-    tools: agent.toolCalls,
-    issues: agent.issueCount,
+    changes: undefined,
   }
 
   const focusTab = (id: InspectorTab) => {
@@ -88,21 +132,46 @@ export function Inspector() {
 
   return (
     <aside
-      className={`h-full shrink-0 overflow-hidden border-l border-line bg-sidebar transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none ${
-        shown ? 'w-[400px] opacity-100' : 'w-0 border-l-transparent opacity-0'
-      }`}
+      ref={panelRef}
+      className={`relative h-full shrink-0 overflow-hidden border-l bg-sidebar motion-reduce:transition-none ${
+        resizing ? '' : 'transition-[width,opacity] duration-200 ease-out'
+      } ${shown ? 'border-line opacity-100' : 'border-l-transparent opacity-0'}`}
+      style={{ width: shown ? 'var(--inspector-w)' : 0, '--inspector-w': `${width}px` } as CSSProperties}
       aria-label={`Inspector for ${agent.name}`}
       aria-hidden={!shown}
     >
-      <div className="flex h-full flex-col" style={{ width: WIDTH }}>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize inspector"
+        aria-valuemin={INSPECTOR_MIN}
+        aria-valuemax={INSPECTOR_MAX}
+        aria-valuenow={width}
+        tabIndex={shown ? 0 : -1}
+        title="Drag to resize. Double-click to reset."
+        onPointerDown={resizeDown}
+        onPointerMove={resizeMove}
+        onPointerUp={resizeEnd}
+        onPointerCancel={resizeEnd}
+        onDoubleClick={() => commitWidth(INSPECTOR_DEFAULT)}
+        onKeyDown={resizeKey}
+        className="group/resize absolute inset-y-0 left-0 z-10 flex w-2 cursor-col-resize touch-none justify-center outline-none"
+      >
+        <span className="h-full w-px bg-transparent transition-colors duration-150 group-hover/resize:bg-white/40 group-focus-visible/resize:bg-white/50 group-active/resize:bg-white/60" />
+      </div>
+      <div className="flex h-full flex-col" style={{ width: 'var(--inspector-w)' }}>
         <Header agent={agent} />
 
-        <div role="tablist" aria-label="Inspector sections" className="flex shrink-0 items-center gap-0.5 border-b border-line px-3" onKeyDown={onTabKey}>
+        {/* The tab bar is a container, so labels depend on the inspector's own width, which the user resizes. */}
+        <div role="tablist" aria-label="Inspector sections" className="@container relative flex min-w-0 shrink-0 items-center gap-0.5 border-b border-line px-3" onKeyDown={onTabKey}>
           {TABS.map((t) => {
             const selected = t.id === tab
             return (
               <button
                 key={t.id}
+                ref={(el) => {
+                  tabEls.current[t.id] = el
+                }}
                 id={`inspector-tab-${t.id}`}
                 role="tab"
                 aria-selected={selected}
@@ -112,23 +181,26 @@ export function Inspector() {
                 aria-label={t.label}
                 title={t.label}
                 className={`group relative -mb-px flex h-9 shrink-0 items-center gap-1.5 rounded-t-md transition-colors duration-150 ${
-                  selected ? 'px-2.5 text-[12px] font-medium text-ink' : 'px-2 text-faint hover:bg-white/[0.03] hover:text-ink'
+                  selected ? 'px-2.5 text-caption font-medium text-ink' : 'px-2 text-caption text-muted hover:bg-white/[0.04] hover:text-ink'
                 }`}
               >
-                <span className={`flex transition-colors duration-150 ${selected ? 'text-ink' : 'text-faint group-hover:text-muted'}`}>{TAB_ICONS[t.id]({ size: 14 })}</span>
-                {selected && <span>{t.label}</span>}
+                <span className={`flex transition-colors duration-150 ${selected ? 'text-ink' : 'text-muted group-hover:text-ink'}`}>{TAB_ICONS[t.id]({ size: 14 })}</span>
+                {/* The selected tab always names itself. The others name themselves only when the bar is wide enough for every label and count. */}
+                <span className={selected ? '' : 'hidden @[440px]:inline'}>{t.label}</span>
                 {counts[t.id] !== undefined && counts[t.id]! > 0 && (
-                  <span className={`rounded px-1 font-mono text-[10px] leading-4 tabular-nums ${selected ? 'bg-white/[0.08] text-muted' : 'bg-white/[0.05] text-faint'}`}>
+                  <span className={`rounded px-1 font-mono text-label leading-4 tabular-nums ${selected ? 'bg-white/[0.08] text-muted' : 'bg-white/[0.05] text-faint'}`}>
                     {counts[t.id]}
                   </span>
                 )}
-                <span
-                  className={`absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-ink transition-opacity duration-150 ${selected ? 'opacity-100' : 'opacity-0'}`}
-                  aria-hidden="true"
-                />
               </button>
             )
           })}
+          {/* One indicator slides between tabs instead of each tab fading its own underline. */}
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute -bottom-px h-[2px] rounded-full bg-ink transition-[left,width,opacity] duration-300 ease-out-expo"
+            style={{ left: bar?.left ?? 0, width: bar?.width ?? 0, opacity: bar ? 1 : 0 }}
+          />
         </div>
 
         <div
@@ -136,7 +208,7 @@ export function Inspector() {
           id={PANEL_ID}
           role="tabpanel"
           aria-labelledby={`inspector-tab-${tab}`}
-          className="flex min-h-0 flex-1 animate-[fade-in_140ms_ease-out] flex-col motion-reduce:animate-none"
+          className="flex min-h-0 flex-1 animate-rise-in flex-col motion-reduce:animate-none"
         >
           {tab === 'overview' && <OverviewTab agent={agent} projectPath={project?.repoPath ?? ''} conflicts={projectConflicts.length} />}
 
@@ -144,9 +216,9 @@ export function Inspector() {
             <ChatTab key={agent.id} agent={agent} messages={detail?.messages} tools={detail?.tools} loaded={!!detail?.loaded} error={detailError} />
           )}
 
-          {tab !== 'overview' && tab !== 'chat' && historyFailed && <HistoryError agentId={agent.id} message={detailError!} />}
+          {tab !== 'overview' && tab !== 'chat' && tab !== 'changes' && historyFailed && <HistoryError agentId={agent.id} message={detailError!} />}
+          {tab === 'changes' && agent.projectId && <GitTab projectId={agent.projectId} agentStatus={agent.status} />}
 
-          {tab === 'activity' && !historyFailed && <ActivityTab entries={detail?.activity} loaded={!!detail?.loaded} />}
           {tab === 'files' && !historyFailed && (
             <FilesTab
               agentId={agent.id}
@@ -155,8 +227,6 @@ export function Inspector() {
               conflictPaths={new Set(projectConflicts.map((c) => c.path))}
             />
           )}
-          {tab === 'tools' && !historyFailed && <ToolsTab tools={detail?.tools} loaded={!!detail?.loaded} />}
-          {tab === 'issues' && !historyFailed && <IssuesTab issues={detail?.issues} loaded={!!detail?.loaded} />}
         </div>
       </div>
     </aside>
@@ -205,6 +275,8 @@ function withDefaults(a: AgentSummary): AgentSummary {
     issueCount: a.issueCount ?? 0,
     lastError: a.lastError ?? '',
     recentFiles: Array.isArray(a.recentFiles) ? a.recentFiles : [],
+    recentTools: Array.isArray(a.recentTools) ? a.recentTools : [],
+    subAgents: Array.isArray(a.subAgents) ? a.subAgents : [],
     usage: { ...NO_USAGE, ...(a.usage ?? {}) },
     capabilities: {
       ...NO_CAPS,
@@ -241,9 +313,9 @@ function Header({ agent }: { agent: AgentSummary }) {
   }
 
   return (
-    <header className="shrink-0 border-b border-line px-4 pb-3.5 pt-4">
-      <div className="flex items-start gap-3">
-        <ProviderMark provider={agent.provider} size={36} />
+    <header className="shrink-0 border-b border-line px-4 pb-3 pt-3.5">
+      <div className="flex items-center gap-2.5">
+        <ProviderMark provider={agent.provider} size={32} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             {editing ? (
@@ -255,20 +327,20 @@ function Header({ agent }: { agent: AgentSummary }) {
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={onNameKey}
                 onBlur={() => finishEdit(true)}
-                className="min-w-0 flex-1 rounded-md border border-line-strong bg-surface px-2 py-0.5 text-[15px] font-semibold tracking-[-0.01em] text-ink outline-none focus:border-white/40"
+                className="min-w-0 flex-1 rounded-md border border-line-strong bg-surface px-2 py-0.5 text-title font-semibold tracking-[-0.01em] text-ink outline-none focus:border-white/40"
               />
             ) : (
               <>
-                <h2 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ink">{agent.name}</h2>
+                <h2 className="truncate text-title font-semibold tracking-[-0.01em] text-ink">{agent.name}</h2>
                 <Button variant="ghost" size="sm" aria-label="Rename agent" title="Rename agent" onClick={startEdit} className="h-6 w-6 shrink-0 rounded-md px-0 text-faint">
                   <IconPencil size={12} />
                 </Button>
               </>
             )}
           </div>
-          <p className="mt-0.5 truncate font-mono text-[11px] text-faint">
+          <p className="truncate text-caption text-muted" title={agent.model || undefined}>
             {agent.providerName}
-            {agent.model ? ` · ${agent.model}` : ''}
+            {agent.model ? <span className="font-mono text-faint"> · {agent.model}</span> : null}
           </p>
         </div>
         <Button variant="ghost" size="sm" aria-label="Close inspector" onClick={() => selectAgent(null)} className="-mr-1.5 h-7 w-7 shrink-0 rounded-md px-0">
@@ -276,12 +348,12 @@ function Header({ agent }: { agent: AgentSummary }) {
         </Button>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
         <StatusPill status={agent.status} detail={agent.statusDetail} />
         <div className="ml-auto flex items-center gap-1">
           {agent.running && caps.stop && (
-            <Button variant="danger" size="sm" onClick={() => void stopAgent(agent.id)} className="h-7">
-              <IconStop size={11} />
+            <Button variant="danger" size="sm" onClick={() => void stopAgent(agent.id)} className="h-6 px-2 text-caption">
+              <IconStop size={10} />
               Stop
             </Button>
           )}
@@ -323,24 +395,24 @@ function OverviewTab({ agent, projectPath, conflicts }: { agent: AgentSummary; p
   return (
     <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-4">
       <Section title="Task">
-        <p className="text-[13px] leading-relaxed text-ink/90">{agent.task || 'No task yet. Send a message in Chat to give this agent work.'}</p>
-        <p className="mt-2 text-[12px] text-muted">
+        <p className="text-body leading-relaxed text-ink/90">{agent.task || 'No task yet. Send a message in Chat to give this agent work.'}</p>
+        <p className="mt-2 text-caption text-muted">
           Current step: <span className="text-ink/80">{agent.statusDetail || '—'}</span>
         </p>
       </Section>
 
-      <Section title="Progress">
-        <div className="grid grid-cols-2 gap-2">
+      <Section title="Activity">
+        <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
           <Stat label="Runtime" value={agent.running ? elapsed(agent.runStartedAt, now) : '—'} />
           <Stat label="Turns" value={String(agent.turns)} />
           <Stat label="Tool calls" value={String(agent.toolCalls)} />
           <Stat label="Files touched" value={String(agent.fileCount)} />
         </div>
-        <p className="mt-2 text-[11px] text-faint">{agent.providerName} does not report percentage progress, so Orbit shows measured activity instead.</p>
+        <p className="mt-2 text-label text-faint">{agent.providerName} does not report percentage progress, so Orbit shows measured activity instead.</p>
       </Section>
 
-      <Section title="Usage">
-        <div className="grid grid-cols-2 gap-2">
+      <Section title="Token usage">
+        <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
           <Stat label="Input tokens" value={tokens(agent.usage.inputTokens)} />
           <Stat label="Output tokens" value={tokens(agent.usage.outputTokens)} />
           <Stat label="Cache reads" value={tokens(agent.usage.cacheReadTokens)} />
@@ -348,20 +420,20 @@ function OverviewTab({ agent, projectPath, conflicts }: { agent: AgentSummary; p
         </div>
       </Section>
 
-      <Section title="Session">
-        <dl className="overflow-hidden rounded-lg border border-line bg-surface/60 text-[12px] [&>div]:border-b [&>div]:border-line [&>div:last-child]:border-b-0">
+      <Section title="Session details">
+        <dl className="divide-y divide-line text-caption">
           <Row k="Provider" v={agent.providerName} />
           <Row k="Model" v={agent.model || 'Provider default'} />
           <Row k="Permissions" v={modeLabel || '—'} />
           <Row k="Workspace" v={projectPath || '—'} mono />
           <Row k="Created" v={timeAgo(agent.createdAt)} />
           <Row k="Last update" v={timeAgo(agent.updatedAt)} />
-          <div className="flex items-center justify-between gap-3 px-3 py-2">
+          <div className="flex items-center justify-between gap-3 py-2">
             <dt className="shrink-0 text-muted">Session</dt>
             <dd className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-mono text-[11px] text-ink/80">{agent.sessionId || 'Not started yet'}</span>
+              <span className="truncate font-mono text-label text-ink/80">{agent.sessionId || 'Not started yet'}</span>
               {agent.sessionId && (
-                <Button variant="ghost" size="sm" onClick={() => void copySession()} aria-label="Copy session id" className="h-6 px-2 text-[11px]">
+                <Button variant="ghost" size="sm" onClick={() => void copySession()} aria-label="Copy session id" className="h-6 px-2 text-label">
                   {copied ? 'Copied' : 'Copy'}
                 </Button>
               )}
@@ -369,7 +441,7 @@ function OverviewTab({ agent, projectPath, conflicts }: { agent: AgentSummary; p
           </div>
         </dl>
         {conflicts > 0 && (
-          <p className="mt-3 flex items-start gap-2 text-[12px] text-warn-soft">
+          <p className="mt-3 flex items-start gap-2 text-caption text-warn-soft">
             <IconAlert size={13} className="mt-0.5" />
             This project has {plural(conflicts, 'file')} written by more than one agent. See the sidebar.
           </p>
@@ -378,7 +450,7 @@ function OverviewTab({ agent, projectPath, conflicts }: { agent: AgentSummary; p
 
       {agent.lastError && (
         <Section title="Last error">
-          <p className="rounded-lg border border-danger/25 bg-danger/[0.08] px-3 py-2 font-mono text-[12px] leading-relaxed text-danger-soft">{agent.lastError}</p>
+          <p className="rounded-lg border border-danger/25 bg-danger/[0.08] px-3 py-2 font-mono text-caption leading-relaxed text-danger-soft">{agent.lastError}</p>
         </Section>
       )}
     </div>
@@ -399,26 +471,30 @@ function useNow(running: boolean): number {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
-      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">{title}</h3>
+      <h3 className="mb-2 text-caption font-medium text-muted">{title}</h3>
       {children}
     </section>
   )
 }
 
+/**
+ * One metric in a compact group. No box: a hairline separates it from the row below, the label sits
+ * above a tabular value, and both share one left edge so the group reads as a grid.
+ */
 function Stat({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
   return (
-    <div className="rounded-lg border border-line bg-surface/60 px-3 py-2.5">
-      <div className="text-[11px] text-muted">{label}</div>
-      <div className={`mt-0.5 truncate font-semibold tabular-nums ${muted ? 'text-[12px] font-medium text-faint' : 'text-[15px] text-ink'}`}>{value}</div>
+    <div className="min-w-0 border-b border-line/60 py-2">
+      <div className="text-caption text-muted">{label}</div>
+      <div className={`mt-0.5 truncate tabular-nums ${muted ? 'text-caption font-medium text-faint' : 'text-title font-semibold text-ink'}`}>{value}</div>
     </div>
   )
 }
 
 function Row({ k, v, mono = false }: { k: string; v: string; mono?: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-3 py-2">
+    <div className="flex items-center justify-between gap-4 py-2">
       <dt className="shrink-0 text-muted">{k}</dt>
-      <dd className={`min-w-0 truncate text-right text-ink/85 ${mono ? 'font-mono text-[11px]' : ''}`} title={v}>
+      <dd className={`min-w-0 truncate text-right text-ink/85 ${mono ? 'font-mono text-label' : ''}`} title={v}>
         {v}
       </dd>
     </div>
@@ -430,81 +506,12 @@ function Row({ k, v, mono = false }: { k: string; v: string; mono?: boolean }) {
 function HistoryError({ agentId, message }: { agentId: string; message: string }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-      <p className="text-[13px] font-medium text-ink/85">Couldn’t load this agent’s history</p>
-      <p className="mt-1 max-w-[280px] text-[12px] leading-relaxed text-faint">{message}</p>
+      <p className="text-body font-medium text-ink/85">Couldn’t load this agent’s history</p>
+      <p className="mt-1 max-w-[280px] text-caption leading-relaxed text-faint">{message}</p>
       <Button variant="secondary" size="sm" className="mt-4" onClick={() => void loadDetail(agentId)}>
         <IconRetry size={12} />
         Try again
       </Button>
-    </div>
-  )
-}
-
-// ---- activity -----------------------------------------------------------------------
-
-/** Log colours: one per event kind, from the same status tokens the planets use. */
-const KIND_COLOR: Record<ActivityEntry['kind'], string> = {
-  status: STATUS_COLOR.idle,
-  tool: STATUS_COLOR.reading,
-  file: STATUS_COLOR.writing,
-  message: 'var(--color-ink)',
-  error: STATUS_COLOR.failed,
-  warning: 'var(--color-warn)',
-  system: 'var(--color-muted)',
-}
-
-type ActivityFilter = 'all' | 'problems' | 'tools' | 'files'
-
-const ACTIVITY_FILTERS: { id: ActivityFilter; label: string; match: (k: ActivityEntry['kind']) => boolean }[] = [
-  { id: 'all', label: 'All', match: () => true },
-  { id: 'problems', label: 'Problems', match: (k) => k === 'error' || k === 'warning' },
-  { id: 'tools', label: 'Tools', match: (k) => k === 'tool' },
-  { id: 'files', label: 'Files', match: (k) => k === 'file' },
-]
-
-function ActivityTab({ entries, loaded }: { entries?: ActivityEntry[]; loaded: boolean }) {
-  const [filter, setFilter] = useState<ActivityFilter>('all')
-  const shown = useMemo(() => {
-    const match = ACTIVITY_FILTERS.find((f) => f.id === filter)?.match ?? (() => true)
-    return (entries ?? []).filter((e) => match(e.kind))
-  }, [entries, filter])
-  if (!loaded) return <Loading />
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b border-line px-3 py-2" role="group" aria-label="Filter activity">
-        {ACTIVITY_FILTERS.map((f) => {
-          const selected = f.id === filter
-          return (
-            <button
-              key={f.id}
-              aria-pressed={selected}
-              onClick={() => setFilter(f.id)}
-              className={`rounded-md px-2 py-1 text-[11px] transition-colors duration-150 ${selected ? 'bg-white/[0.08] text-ink' : 'text-faint hover:bg-white/[0.04] hover:text-muted'}`}
-            >
-              {f.label}
-            </button>
-          )
-        })}
-      </div>
-      <VirtualList
-        items={shown}
-        rowHeight={28}
-        stickToEnd
-        className="px-2 py-2"
-        empty={<Empty title={filter === 'all' ? 'No activity yet' : 'Nothing in this filter'} body={filter === 'all' ? 'Events appear here as the agent works.' : 'Switch the filter to see other events.'} />}
-        renderRow={(e) => (
-          <div className="flex h-full items-center gap-2.5 rounded px-2 font-mono text-[11.5px] hover:bg-white/[0.03]">
-            <span className="w-[88px] shrink-0 whitespace-nowrap tabular-nums text-faint">{clock(e.at)}</span>
-            <span className="w-[68px] shrink-0 whitespace-nowrap text-[9.5px] font-semibold uppercase tracking-[0.08em]" style={{ color: KIND_COLOR[e.kind] ?? KIND_COLOR.system }}>
-              {e.kind}
-            </span>
-            <span className={`truncate ${e.kind === 'error' ? 'text-danger-soft' : 'text-ink/85'}`} title={e.text}>
-              {e.text}
-            </span>
-          </div>
-        )}
-      />
     </div>
   )
 }
@@ -542,7 +549,7 @@ function FilesTab({
           <button
             onClick={() => openDialog({ kind: 'file', agentId, path: f.path })}
             aria-label={`Open diff for ${baseName(f.path)}`}
-            className="group flex h-full w-full items-center gap-3 rounded-lg px-2.5 text-left transition-colors duration-150 hover:bg-white/[0.04]"
+            className="group flex h-full w-full items-center gap-3 rounded-lg px-2.5 text-left transition-colors duration-150 hover:bg-row-hover"
           >
             <span className="relative flex h-2 w-2 shrink-0">
               {f.state === 'writing' && <span className="absolute inset-0 animate-ping rounded-full opacity-60 motion-reduce:animate-none" style={{ background: color }} />}
@@ -550,16 +557,16 @@ function FilesTab({
             </span>
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-2">
-                <span className="truncate text-[13px] font-medium text-ink">{baseName(f.path)}</span>
+                <span className="truncate text-body font-medium text-ink">{baseName(f.path)}</span>
                 {conflictPaths.has(f.path) && <Tag tone="warn">Conflict</Tag>}
               </span>
-              <span className="block truncate font-mono text-[10.5px] text-faint" title={f.path}>
+              <span className="block truncate font-mono text-label text-faint" title={f.path}>
                 {dirName(f.path) || f.path}
               </span>
             </span>
-            <span className="shrink-0 text-right font-mono text-[10.5px] tabular-nums text-muted">
+            <span className="shrink-0 text-right text-label tabular-nums text-muted">
               <span className="block">
-                {f.writes ?? 0}w · {f.reads ?? 0}r
+                {f.writes ?? 0} written · {f.reads ?? 0} read
               </span>
               <span className="block text-faint">{timeAgo(f.lastAt)}</span>
             </span>
@@ -572,96 +579,11 @@ function FilesTab({
 
 // ---- tools ------------------------------------------------------------------------------
 
-const TOOL_STATUS: Record<ToolCall['status'], { label: string; color: string }> = {
-  running: { label: 'Running', color: STATUS_COLOR.thinking },
-  ok: { label: 'Done', color: STATUS_COLOR.completed },
-  error: { label: 'Failed', color: STATUS_COLOR.failed },
-}
-
-function ToolsTab({ tools, loaded }: { tools?: ToolCall[]; loaded: boolean }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  if (!loaded || !tools) return <Loading />
-  // Follow the newest call until the user picks one, then keep their choice.
-  const selected = tools.find((t) => t.id === selectedId) ?? tools[tools.length - 1]
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <VirtualList
-        items={tools}
-        rowHeight={36}
-        stickToEnd
-        className="px-2 py-2"
-        empty={<Empty title="No tool calls yet" body="Commands, file edits and searches the agent makes are listed here." />}
-        renderRow={(t) => {
-          const status = TOOL_STATUS[t.status] ?? TOOL_STATUS.running
-          const active = selected?.id === t.id
-          return (
-            <button
-              onClick={() => setSelectedId(t.id)}
-              aria-pressed={active}
-              className={`flex h-full w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[12px] transition-colors duration-150 hover:bg-white/[0.04] ${active ? 'bg-white/[0.06]' : ''}`}
-            >
-              <span className="w-12 shrink-0 truncate font-mono text-[11px] font-medium text-ink">{t.name || 'Tool'}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">{t.summary}</span>
-              <span className="flex shrink-0 items-center gap-1.5 text-[11px]" style={{ color: status.color }}>
-                <span className="h-1.5 w-1.5 rounded-full" style={{ background: status.color }} />
-                {status.label}
-              </span>
-            </button>
-          )
-        }}
-      />
-      {selected && (
-        <div className="max-h-[44%] shrink-0 space-y-3 overflow-y-auto border-t border-line bg-canvas/50 px-4 py-3">
-          <div className="flex items-center justify-between font-mono text-[11px] text-muted">
-            <span className="font-medium text-ink">{selected.name || 'Tool'}</span>
-            <span className="text-faint">{clock(selected.at)}</span>
-          </div>
-          <CodeBlock label="Input" text={selected.input} />
-          <CodeBlock
-            label="Result"
-            text={selected.output}
-            placeholder={selected.status === 'running' ? 'Waiting for result…' : 'No output'}
-            danger={selected.status === 'error'}
-          />
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---- issues -------------------------------------------------------------------------------
-
-function IssuesTab({ issues, loaded }: { issues?: Issue[]; loaded: boolean }) {
-  if (!loaded || !issues) return <Loading />
-  const ordered = [...issues].reverse()
-  return (
-    <VirtualList
-      items={ordered}
-      rowHeight={56}
-      className="px-2 py-2"
-      empty={<Empty title="No errors or warnings" body="Problems the agent or provider reports show up here." />}
-      renderRow={(i) => (
-        <div className="flex h-full items-start gap-3 rounded-lg px-2.5 py-2 hover:bg-white/[0.03]">
-          <span className="mt-0.5">
-            <Tag tone={i.level === 'error' ? 'warn' : 'neutral'}>{i.level}</Tag>
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="line-clamp-2 text-[12px] leading-snug text-ink/90" title={i.text}>
-              {i.text}
-            </span>
-            <span className="mt-0.5 block font-mono text-[10px] text-faint">{clock(i.at)}</span>
-          </span>
-        </div>
-      )}
-    />
-  )
-}
-
 // ---- shared bits ----------------------------------------------------------------------------
 
 function Loading() {
   return (
-    <div className="flex flex-1 items-center justify-center text-[12px] text-muted" role="status">
+    <div className="flex flex-1 items-center justify-center text-caption text-muted" role="status">
       Loading history…
     </div>
   )
@@ -670,8 +592,8 @@ function Loading() {
 function Empty({ title, body }: { title: string; body: string }) {
   return (
     <div className="px-6 text-center">
-      <p className="text-[13px] font-medium text-ink/80">{title}</p>
-      <p className="mt-1 text-[12px] leading-relaxed text-faint">{body}</p>
+      <p className="text-body font-medium text-ink/80">{title}</p>
+      <p className="mt-1 text-caption leading-relaxed text-faint">{body}</p>
     </div>
   )
 }

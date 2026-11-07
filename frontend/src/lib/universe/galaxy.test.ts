@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { BASE_RADIUS, MIN_REACH, RING_GAP, computeLayout } from './layout'
 import type { AgentSummary, ProjectSummary } from '../../types'
 
-const project = (id: string): ProjectSummary => ({ id, name: id, repoPath: id, createdAt: 1, agentCount: 0, runningCount: 0, conflicts: [] })
+const project = (id: string): ProjectSummary => ({ id, name: id, repoPath: id, createdAt: 1, agentCount: 0, runningCount: 0, conflicts: [], handoffs: [], conversations: [] })
 const agent = (id: string, projectId: string): AgentSummary => ({ id, projectId, createdAt: Number(id.replace(/\D/g, '')) } as unknown as AgentSummary)
 
 describe('universe reach', () => {

@@ -3,21 +3,28 @@ import type { AgentSummary, Point, ProjectSummary, Status } from '../../types'
 import { ACTIVE_STATUSES } from '../../types'
 import { STATUS_COLOR } from '../../lib/theme'
 import { fitPoints, screenToWorld, tweenAt, zoomAt, clampZoom, type Camera, type Tween } from '../../lib/universe/camera'
-import { computeLayout, planetPosition, type Layout } from '../../lib/universe/layout'
+import { computeLayout, displayOrbit, planetPosition, systemBounds, worldToStored, type Layout } from '../../lib/universe/layout'
 import { PULSE_MS, drawUniverse, hitTest, makeBackdrop, planetScreen, type Hit, type Pulse, type ViewState } from '../../lib/universe/render'
 import { setIconListener } from '../../lib/icons'
 import { createGalaxy, type Galaxy } from '../../lib/universe/galaxyGL'
+import { buildGalaxyField, type GalaxyField } from '../../lib/universe/galaxyShape'
 import { HoverCard } from './HoverCard'
 
 /** Milliseconds between frames while only idle planets are drifting (30 fps). Culling keeps this cheap. */
 const IDLE_FRAME_MS = 33
 const DRAG_THRESHOLD = 4
 const FOCUS_MS = 650
+/** Two clicks on the same star within this window count as a double-click. */
+const DOUBLE_CLICK_MS = 380
 
 export interface UniverseHandle {
   fit(): void
   focusAgent(agentId: string): void
   focusProject(projectId: string): void
+  /** Frames a whole solar system. */
+  focusSystem(projectId: string): void
+  /** Leaves a focused solar system for the full galaxy. Returns false when no system was focused. */
+  returnToGalaxy(): boolean
   zoomBy(factor: number): void
   pan(dx: number, dy: number): void
 }
@@ -32,7 +39,6 @@ export interface UniverseProps {
   onOpenMenu: (agentId: string, x: number, y: number) => void
   onOpenProjectMenu: (projectId: string, x: number, y: number) => void
   onMovePlanet: (agentId: string, x: number, y: number) => void
-  onOpenFiles: (agentId: string, path: string | null) => void
 }
 
 interface DragState {
@@ -78,6 +84,11 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
   const fittedRef = useRef(false)
   const dragRef = useRef<DragState | null>(null)
   const hoverIdRef = useRef<string | null>(null)
+  const lastSunClickRef = useRef<{ id: string; at: number } | null>(null)
+  const fieldRef = useRef<GalaxyField | null>(null)
+  const fieldKeyRef = useRef<string | null>(null)
+  /** The solar system the camera is framing, or null while showing the whole galaxy. */
+  const focusedSystemRef = useRef<string | null>(null)
   const [hoverId, setHoverId] = useState<string | null>(null)
 
   const timeAt = useCallback((now: number) => (propsRef.current.reducedMotion ? 0 : (now - startRef.current) / 1000), [])
@@ -190,7 +201,15 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
       if (!agentsRef.current.has(id)) overridesRef.current.delete(id)
     }
     const t0 = timeAt(performance.now())
-    layoutRef.current = computeLayout(projects, agents, overridesRef.current, t0)
+    layoutRef.current = computeLayout(projects, agents, overridesRef.current, t0, layoutRef.current, dragRef.current?.moved ? dragRef.current.agentId : undefined)
+
+    // The galactic structure depends on where the suns are, not on agents, so rebuild it only when they move.
+    const sunKey = layoutRef.current.suns.map((s) => `${s.id}:${Math.round(s.x)},${Math.round(s.y)}`).join('|')
+    if (sunKey !== fieldKeyRef.current) {
+      fieldKeyRef.current = sunKey
+      fieldRef.current = buildGalaxyField(layoutRef.current.suns)
+      galaxyRef.current?.setField(fieldRef.current)
+    }
 
     // A finished or failed run pulses once, so the outcome is noticed without a modal.
     if (!reducedMotion) {
@@ -235,6 +254,7 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
   // ---- camera ----------------------------------------------------------------------
 
   const fitNow = (animate: boolean) => {
+    focusedSystemRef.current = null
     const { w, h } = sizeRef.current
     const points = [
       ...layoutRef.current.suns.flatMap((s) => [
@@ -261,9 +281,18 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
   const focusAgent = (id: string) => {
     const planet = layoutRef.current.planetById.get(id)
     if (!planet) return
+    // Frame the agent's whole orbit, centred on its sun, so the star and the neighbouring planets stay in
+    // context. The zoom is capped: focus never zooms in past a readable level, and never out to a blur.
+    const { w, h } = sizeRef.current
+    const R = displayOrbit(planet, 1)
     const pos = planetPosition(planet, timeAt(performance.now()))
-    const zoom = clampZoom(Math.max(cameraRef.current.zoom, 1.05))
-    startTween({ x: pos.x, y: pos.y, zoom }, FOCUS_MS)
+    const orbit = [
+      { x: planet.sunX - R, y: planet.sunY - R },
+      { x: planet.sunX + R, y: planet.sunY + R },
+      pos,
+    ]
+    const fit = fitPoints(orbit, w, h, 110)
+    startTween({ x: fit.x, y: fit.y, zoom: clampZoom(Math.min(Math.max(fit.zoom, 0.9), 1.6)) }, FOCUS_MS)
   }
 
   const focusProject = (projectId: string) => {
@@ -272,12 +301,26 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
     startTween({ x: sun.x, y: sun.y, zoom: clampZoom(Math.max(cameraRef.current.zoom, 0.8)) }, FOCUS_MS)
   }
 
+  const focusSystem = (projectId: string) => {
+    const sun = layoutRef.current.sunById.get(projectId)
+    if (!sun) return
+    const { w, h } = sizeRef.current
+    focusedSystemRef.current = projectId
+    startTween(fitPoints(systemBounds(sun), w, h, 90), FOCUS_MS)
+  }
+
   useImperativeHandle(
     ref,
     () => ({
       fit: () => fitNow(true),
       focusAgent,
       focusProject,
+      focusSystem,
+      returnToGalaxy: () => {
+        if (!focusedSystemRef.current) return false
+        fitNow(true)
+        return true
+      },
       zoomBy: (factor: number) => {
         const { w, h } = sizeRef.current
         tweenRef.current = null
@@ -305,6 +348,7 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
 
     const galaxy = createGalaxy(container)
     galaxyRef.current = galaxy
+    galaxy?.setField(fieldRef.current)
     galaxy?.setReducedMotion(propsRef.current.reducedMotion)
 
     const resize = () => {
@@ -394,6 +438,8 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
           [...agentsRef.current.values()],
           overridesRef.current,
           timeAt(performance.now()),
+          layoutRef.current,
+          drag.agentId,
         )
       } else {
         canvas.style.cursor = 'grabbing'
@@ -412,7 +458,13 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
 
       if (drag.moved && drag.mode === 'planet' && drag.agentId) {
         const world = overridesRef.current.get(drag.agentId)
-        if (world) propsRef.current.onMovePlanet(drag.agentId, world.x, world.y)
+        // Saved positions are in the frame the suns were first placed in, so convert before persisting.
+        const projectId = agentsRef.current.get(drag.agentId)?.projectId
+        const sun = projectId ? layoutRef.current.sunById.get(projectId) : undefined
+        if (world && sun) {
+          const stored = worldToStored(sun, world)
+          propsRef.current.onMovePlanet(drag.agentId, stored.x, stored.y)
+        }
         return
       }
       if (drag.moved) return
@@ -423,12 +475,20 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
       } else if (hit.kind === 'planet') {
         focusAgent(hit.id)
         propsRef.current.onSelectAgent(hit.id)
-      } else if (hit.kind === 'moon') {
+      } else if (hit.kind === 'rock') {
         propsRef.current.onSelectAgent(hit.agentId)
-        propsRef.current.onOpenFiles(hit.agentId, hit.count > 1 || hit.path === null ? null : hit.path)
       } else {
         propsRef.current.onSelectProject(hit.id)
-        focusProject(hit.id)
+        // A second click on the same star within the window enters its solar system.
+        const now = performance.now()
+        const last = lastSunClickRef.current
+        if (last && last.id === hit.id && now - last.at < DOUBLE_CLICK_MS) {
+          lastSunClickRef.current = null
+          focusSystem(hit.id)
+        } else {
+          lastSunClickRef.current = { id: hit.id, at: now }
+          focusProject(hit.id)
+        }
       }
     }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -27,9 +27,26 @@ interface Instance {
   opened: boolean
 }
 
-const OPEN_HEIGHT = 300
+const DEFAULT_HEIGHT = 300
+const MIN_HEIGHT = 120
 const CLOSED_HEIGHT = 32
+const HEIGHT_KEY = 'orbit:terminal-height'
 const TOGGLE_EVENT = 'orbit:toggle-terminal'
+
+/** The panel may take up to 70% of the window, so the galaxy always keeps room. */
+function clampHeight(h: number): number {
+  const max = typeof window === 'undefined' ? 900 : Math.max(MIN_HEIGHT, Math.round(window.innerHeight * 0.7))
+  return Math.min(max, Math.max(MIN_HEIGHT, Math.round(h)))
+}
+
+function savedHeight(): number {
+  try {
+    const raw = Number(localStorage.getItem(HEIGHT_KEY))
+    return Number.isFinite(raw) && raw > 0 ? clampHeight(raw) : DEFAULT_HEIGHT
+  } catch {
+    return DEFAULT_HEIGHT
+  }
+}
 
 function newTerminal(): Terminal {
   return new Terminal({
@@ -52,6 +69,7 @@ export function TerminalPanel() {
   const activeProjectId = useStore((s) => s.activeProjectId)
   const projects = useStore((s) => s.projects)
   const [open, setOpen] = useState(false)
+  const [height, setHeight] = useState(savedHeight)
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const instances = useRef(new Map<string, Instance>())
@@ -174,19 +192,79 @@ export function TerminalPanel() {
 
   const toggle = () => setOpen((v) => !v)
 
+  // Remember the height the user chose. Written after the drag ends, not on every pointer move.
+  const commitHeight = (h: number) => {
+    setHeight(h)
+    try {
+      localStorage.setItem(HEIGHT_KEY, String(h))
+    } catch {
+      /* storage can be unavailable; the height still applies for this session */
+    }
+  }
+
+  // Dragging the top edge: the panel grows as the pointer moves up, shrinks as it moves down.
+  const dragStart = useRef<{ y: number; h: number } | null>(null)
+  const onResizeDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    dragStart.current = { y: e.clientY, h: height }
+  }
+  const onResizeMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const start = dragStart.current
+    if (!start) return
+    setHeight(clampHeight(start.h + (start.y - e.clientY)))
+  }
+  const onResizeUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragStart.current) return
+    dragStart.current = null
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
+    commitHeight(clampHeight(height))
+  }
+  // Keyboard: arrows step the height, Home restores the default. Double-click does the same.
+  const onResizeKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = e.key === 'ArrowUp' ? 24 : e.key === 'ArrowDown' ? -24 : 0
+    if (step) {
+      e.preventDefault()
+      commitHeight(clampHeight(height + step))
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      commitHeight(DEFAULT_HEIGHT)
+    }
+  }
+
   return (
     <section
       aria-label="Terminal"
-      className="flex shrink-0 flex-col border-t border-line bg-sidebar"
-      style={{ height: open ? OPEN_HEIGHT : CLOSED_HEIGHT }}
+      className="relative flex shrink-0 flex-col border-t border-line bg-sidebar"
+      style={{ height: open ? clampHeight(height) : CLOSED_HEIGHT }}
     >
+      {open && (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize terminal. Arrow keys change the height, Home restores the default."
+          aria-valuemin={MIN_HEIGHT}
+          aria-valuenow={clampHeight(height)}
+          tabIndex={0}
+          title="Drag to resize. Double-click to reset."
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+          onDoubleClick={() => commitHeight(DEFAULT_HEIGHT)}
+          onKeyDown={onResizeKey}
+          className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize touch-none items-center justify-center outline-none"
+        >
+          <span className="h-0.5 w-10 rounded-full bg-white/0 transition-colors duration-150 group-hover:bg-white/25 group-focus-visible:bg-white/40 group-active:bg-white/50" />
+        </div>
+      )}
       {open ? (
         <div className="flex h-9 shrink-0 items-center gap-1 border-b border-line px-2">
           <div role="tablist" aria-label="Terminals" className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
             {visible.map((t) => (
               <div
                 key={t.id}
-                className={`flex h-7 shrink-0 items-center gap-1 rounded-md pl-2.5 pr-1 text-[12px] ${
+                className={`flex h-7 shrink-0 items-center gap-1 rounded-md pl-2.5 pr-1 text-caption ${
                   t.id === current?.id ? 'bg-white/[0.07] text-ink' : 'text-muted hover:bg-white/[0.04] hover:text-ink'
                 }`}
               >
@@ -198,7 +276,7 @@ export function TerminalPanel() {
                   className="flex items-center gap-1.5 py-1"
                 >
                   {t.title}
-                  {t.ended && <span className="text-[10px] uppercase tracking-[0.06em] text-faint">ended</span>}
+                  {t.ended && <span className="text-label uppercase tracking-[0.06em] text-faint">ended</span>}
                 </button>
                 <button
                   type="button"
@@ -211,7 +289,7 @@ export function TerminalPanel() {
               </div>
             ))}
           </div>
-          <span className="hidden max-w-[40%] truncate px-2 font-mono text-[10.5px] text-faint sm:block" title={project?.repoPath}>
+          <span className="hidden max-w-[40%] truncate px-2 font-mono text-label text-faint sm:block" title={project?.repoPath}>
             {project ? project.repoPath : 'No project selected'}
           </span>
           <Button
@@ -235,7 +313,7 @@ export function TerminalPanel() {
             type="button"
             onClick={toggle}
             aria-label="Open terminal"
-            className="flex items-center gap-2 rounded-md px-2 py-1 text-[12px] text-muted hover:bg-white/[0.05] hover:text-ink"
+            className="flex items-center gap-2 rounded-md px-2 py-1 text-caption text-muted hover:bg-white/[0.05] hover:text-ink"
           >
             Terminal
             <Kbd>Ctrl</Kbd>
@@ -257,5 +335,5 @@ export function TerminalPanel() {
 }
 
 function Empty({ text }: { text: string }) {
-  return <p className="flex h-full items-center justify-center text-center text-[12px] text-faint">{text}</p>
+  return <p className="flex h-full items-center justify-center text-center text-caption text-faint">{text}</p>
 }

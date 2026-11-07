@@ -1,13 +1,26 @@
 // User actions. Each one calls the backend, reports failures as toasts, and keeps
 // components free of error plumbing.
-import type { LaunchRequest } from '../types'
+import type { BrowserPage, ImageUpload, LaunchRequest } from '../types'
 import { api, errorText } from './bridge'
-import { closeDialog, focusAgent, getState, selectAgent, setDetail, setDetailError, toast } from './store'
+import type { PhysicalBounds } from './browserPane'
+import { closeDialog, focusAgent, getState, selectAgent, setDetail, setDetailError, setState, toast } from './store'
 
 /**
  * Loads the full history of an agent. Safe to call again: it skips agents already loaded,
  * and retries after a failure. A failure is kept in the store so the inspector can offer a retry.
  */
+/**
+ * Reads each provider's usage allowance into the store. The backend caches the reading for a few
+ * minutes, so polling is cheap; force asks the CLIs again now. Failures leave the last reading in place.
+ */
+export async function refreshLimits(force = false): Promise<void> {
+  try {
+    setState({ limits: await api.getLimits(force) })
+  } catch (err) {
+    toast(errorText(err), 'error')
+  }
+}
+
 export async function loadDetail(agentId: string): Promise<void> {
   if (getState().details[agentId]?.loaded) return
   try {
@@ -20,13 +33,57 @@ export async function loadDetail(agentId: string): Promise<void> {
   }
 }
 
-export async function sendMessage(agentId: string, text: string): Promise<boolean> {
+/** Stages (stage = true) or unstages paths in a project's repository. */
+export async function stagePaths(projectId: string, paths: string[], stage: boolean): Promise<boolean> {
   try {
-    await api.sendMessage(agentId, text)
+    if (stage) await api.stageFiles(projectId, paths)
+    else await api.unstageFiles(projectId, paths)
     return true
   } catch (err) {
     toast(errorText(err), 'error')
     return false
+  }
+}
+
+/** Commits paths, or the whole index when paths is empty. Returns the short hash, or null on failure. */
+export async function commitChanges(projectId: string, message: string, paths: string[]): Promise<string | null> {
+  try {
+    const hash = await api.commitChanges(projectId, message, paths)
+    toast(`Committed ${hash}`, 'success')
+    return hash
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return null
+  }
+}
+
+export async function setAutoCommit(projectId: string, on: boolean): Promise<boolean> {
+  try {
+    await api.setProjectAutoCommit(projectId, on)
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+export async function sendMessage(agentId: string, text: string, images: ImageUpload[] = []): Promise<boolean> {
+  try {
+    await api.sendMessage(agentId, text, images)
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+/** Loads a chat image as a data URL. Returns null after a toast when it cannot be loaded. */
+export async function attachmentImage(agentId: string, attachmentId: string): Promise<string | null> {
+  try {
+    return await api.attachmentImage(agentId, attachmentId)
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return null
   }
 }
 
@@ -149,5 +206,78 @@ export async function moveAgent(agentId: string, x: number, y: number): Promise<
     await api.setAgentPosition(agentId, x, y)
   } catch (err) {
     toast(errorText(err), 'error')
+  }
+}
+
+/**
+ * Loads a web page for the built-in browser. Returns null after a toast when it cannot be
+ * loaded. A page that answers with an error status still loads; its status is on the page.
+ */
+export async function browsePage(address: string): Promise<BrowserPage | null> {
+  try {
+    return await api.browserFetch(address)
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return null
+  }
+}
+
+/** Opens a web address in the system browser. */
+export async function openInSystemBrowser(address: string): Promise<void> {
+  try {
+    await api.browserOpenExternal(address)
+  } catch (err) {
+    toast(errorText(err), 'error')
+  }
+}
+
+// ---- native page view (the browser dialog) ------------------------------------------------
+// Failures to open or navigate become toasts. Moving the view happens on every resize, so it stays quiet.
+
+/** Whether this system can show real web pages. False means the dialog uses the text view. */
+export async function pageViewSupported(): Promise<boolean> {
+  try {
+    return await api.browserPaneSupported()
+  } catch {
+    return false
+  }
+}
+
+/** Shows the page view over a rectangle and loads the address, when one is given. */
+export async function pageViewOpen(address: string, b: PhysicalBounds): Promise<boolean> {
+  try {
+    await api.browserPaneOpen(address, b.x, b.y, b.w, b.h)
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+export async function pageViewNavigate(address: string): Promise<void> {
+  try {
+    await api.browserPaneNavigate(address)
+  } catch (err) {
+    toast(errorText(err), 'error')
+  }
+}
+
+export function pageViewMove(b: PhysicalBounds): void {
+  void api.browserPaneSetBounds(b.x, b.y, b.w, b.h).catch(() => {})
+}
+
+export async function pageViewCommand(command: 'back' | 'forward' | 'reload' | 'stop' | 'hide' | 'close'): Promise<void> {
+  const run = {
+    back: () => api.browserPaneBack(),
+    forward: () => api.browserPaneForward(),
+    reload: () => api.browserPaneReload(),
+    stop: () => api.browserPaneStop(),
+    hide: () => api.browserPaneHide(),
+    close: () => api.browserPaneClose(),
+  }[command]
+  try {
+    await run()
+  } catch (err) {
+    if (command !== 'hide' && command !== 'close') toast(errorText(err), 'error')
   }
 }
