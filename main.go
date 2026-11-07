@@ -1,14 +1,12 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"os"
 	"slices"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"orbit/internal/browser"
 )
@@ -26,28 +24,21 @@ func main() {
 		return
 	}
 
-	app := NewApp()
-
-	err := wails.Run(&options.App{
-		Title:            "Orbit",
-		Width:            1440,
-		Height:           920,
-		MinWidth:         1080,
-		MinHeight:        680,
-		BackgroundColour: &options.RGBA{R: 11, G: 12, B: 16, A: 255},
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		OnStartup:  app.startup,
-		OnShutdown: app.shutdown,
-		Bind: []interface{}{
-			app,
-		},
-		Windows: &windows.Options{
-			Theme: windows.Dark,
-		},
+	backend := NewApp()
+	app := application.New(application.Options{
+		Name:       "Orbit",
+		Assets:     application.AssetOptions{Handler: application.AssetFileServerFS(assets)},
+		Services:   []application.Service{application.NewService(backend)},
+		OnShutdown: func() { backend.shutdown(context.Background()) },
 	})
-	if err != nil {
+	backend.wails = app
+	backend.startup(context.Background())
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title: "Orbit", Width: 1440, Height: 920, MinWidth: 1080, MinHeight: 680,
+		BackgroundColour: application.NewRGBA(11, 12, 16, 255),
+		Windows:          application.WindowsWindow{Theme: application.Dark},
+	})
+	if err := app.Run(); err != nil {
 		println("Error:", err.Error())
 	}
 }

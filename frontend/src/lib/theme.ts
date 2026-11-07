@@ -62,7 +62,9 @@ export const PROVIDER_BODY: Record<string, PlanetBody> = {
   codex: { base: token('codex', '#e4e4e7'), glow: token('codex-glow', '#ffffff'), mark: 'X', logo: CODEX_LOGO, logoRule: 'evenodd' },
   // Marks adapted to the 24×24 canvas from the projects' official websites.
   omp: { base: '#a65af0', glow: '#df9cff', mark: 'π', logo: 'M5.25 6h13.5v3h-3.75v12h-3V9h-2.25v8.25h-3V9h-1.5z' },
+  pi: { base: '#10b981', glow: '#6ee7b7', mark: 'π' },
   opencode: { base: '#d4d4d4', glow: '#ffffff', mark: 'O', logo: 'M4 4h16v16H4z M8 8h8v8H8z', logoRule: 'evenodd' },
+  fx: { base: '#0070f3', glow: '#60a5fa', mark: 'f' },
 }
 
 // Sun colours. Muted and warm, so the suns read as light sources without competing with planets.

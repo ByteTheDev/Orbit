@@ -123,7 +123,7 @@ type Info struct {
 
 // Registry returns all known providers keyed by id.
 func Registry() map[string]Provider {
-	list := []Provider{Claude{}, Codex{}, OMP{}, OpenCode{}}
+	list := []Provider{Claude{}, Codex{}, OMP{}, OpenCode{}, Fx{}, Pi{}}
 	out := make(map[string]Provider, len(list))
 	for _, p := range list {
 		out[p.ID()] = p
@@ -133,7 +133,7 @@ func Registry() map[string]Provider {
 
 // Infos describes every registered provider, in display order.
 func Infos() []Info {
-	order := []Provider{Claude{}, Codex{}, OMP{}, OpenCode{}}
+	order := []Provider{Claude{}, Codex{}, OMP{}, OpenCode{}, Fx{}, Pi{}}
 	out := make([]Info, 0, len(order))
 	for _, p := range order {
 		d := p.Detect()

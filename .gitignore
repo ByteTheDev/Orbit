@@ -3,3 +3,5 @@ node_modules
 frontend/dist
 website/taste-skill
 website/.taste-skill/
+/bin/
+/.task/

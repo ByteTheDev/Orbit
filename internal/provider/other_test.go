@@ -1,6 +1,43 @@
 package provider
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+func TestOMPArgsPassApprovalModeAndThinking(t *testing.T) {
+	args := ompArgs(Spec{Prompt: "x", Model: "openai/gpt-5", PermissionMode: "yolo", Effort: "high"})
+	for _, want := range [][]string{{"--approval-mode", "yolo"}, {"--thinking", "high"}, {"--model", "openai/gpt-5"}} {
+		i := slices.Index(args, want[0])
+		if i < 0 || i+1 >= len(args) || args[i+1] != want[1] {
+			t.Fatalf("args %v: want %v", args, want)
+		}
+	}
+}
+
+func TestOMPArgsOmitUnchosenOptions(t *testing.T) {
+	args := ompArgs(Spec{Prompt: "x"})
+	if slices.Contains(args, "--approval-mode") || slices.Contains(args, "--thinking") {
+		t.Fatalf("no choice should send no flag, got %v", args)
+	}
+}
+
+func TestOpenCodeArgsAutoOnlyForFullAccess(t *testing.T) {
+	if !slices.Contains(openCodeArgs(Spec{Prompt: "x", PermissionMode: "auto"}), "--auto") {
+		t.Fatal("full access should pass --auto")
+	}
+	for _, mode := range []string{"", "ask"} {
+		if slices.Contains(openCodeArgs(Spec{Prompt: "x", PermissionMode: mode}), "--auto") {
+			t.Fatalf("mode %q should not pass --auto", mode)
+		}
+	}
+}
+
+func TestOtherProvidersOfferPermissionModes(t *testing.T) {
+	if len(OMP{}.Capabilities().PermissionModes) == 0 || len(OpenCode{}.Capabilities().PermissionModes) == 0 {
+		t.Fatal("OMP and OpenCode must offer permission modes")
+	}
+}
 
 func TestOtherProvidersParseSessionsAndMessages(t *testing.T) {
 	omp := &ompParser{}

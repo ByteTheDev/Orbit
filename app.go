@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"orbit/internal/agent"
 	"orbit/internal/browser"
@@ -42,6 +42,7 @@ const saveDelay = 900 * time.Millisecond
 // App is the Wails-bound backend. Its exported methods are callable from the frontend.
 type App struct {
 	ctx       context.Context
+	wails     *application.App
 	mgr       *agent.Manager
 	terms     *terminal.Manager
 	limits    provider.LimitsCache
@@ -103,13 +104,13 @@ func (a *App) shutdown(context.Context) {
 
 func (a *App) emitTerminalOutput(id, data string) {
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, terminalOutputEvent, TerminalOutput{ID: id, Data: data})
+		a.wails.Event.Emit(terminalOutputEvent, TerminalOutput{ID: id, Data: data})
 	}
 }
 
 func (a *App) emitTerminalExit(id string) {
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, terminalExitEvent, map[string]string{"id": id})
+		a.wails.Event.Emit(terminalExitEvent, map[string]string{"id": id})
 	}
 }
 
@@ -143,7 +144,7 @@ func (a *App) emitBatch(batch []model.Event) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, eventName, batch)
+	a.wails.Event.Emit(eventName, batch)
 }
 
 func (a *App) scheduleSave() {
@@ -336,8 +337,7 @@ func (a *App) BrowserOpenExternal(address string) error {
 	if err != nil {
 		return err
 	}
-	runtime.BrowserOpenURL(a.ctx, u.String())
-	return nil
+	return a.wails.Browser.OpenURL(u.String())
 }
 
 // BrowserPaneSupported reports whether the browser dialog can show real web pages here.
@@ -441,7 +441,7 @@ func (a *App) withPane(f func(*webpane.Pane)) {
 // emitPaneState sends the page view's state to the frontend. It may be called from the view's thread.
 func (a *App) emitPaneState(ev webpane.Event) {
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "browser:pane", ev)
+		a.wails.Event.Emit("browser:pane", ev)
 	}
 }
 
@@ -450,9 +450,9 @@ func (a *App) PickRepository() (string, error) {
 	if a.ctx == nil {
 		return "", errors.New("the window is not ready yet")
 	}
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Choose the project's repository folder",
-	})
+	return a.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title: "Choose the project's repository folder", CanChooseDirectories: true,
+	}).PromptForSingleSelection()
 }
 
 // CreateProject registers a folder as a project.

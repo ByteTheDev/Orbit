@@ -381,7 +381,7 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
               <div id="launch-mode" role="radiogroup" aria-label="Permissions" className="grid grid-cols-2 gap-1.5">
                 {modes.map((m) => {
                   const selected = m.id === mode
-                  const Icon = m.id === 'bypassPermissions' || m.id === 'danger-full-access' ? IconUnlock : m.id === 'plan' || m.id === 'read-only' ? IconEye : IconShield
+                  const Icon = m.id === 'bypassPermissions' || m.id === 'danger-full-access' || m.id === 'full-access' ? IconUnlock : m.id === 'plan' || m.id === 'read-only' ? IconEye : IconShield
                   return (
                     <button
                       key={m.id}

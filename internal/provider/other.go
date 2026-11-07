@@ -39,11 +39,28 @@ func otherCaps(models []model.ModelOption) model.Capabilities {
 	return model.Capabilities{Stop: true, Resume: true, Send: true, PermissionModes: []model.PermissionMode{}, Models: models}
 }
 
+// ompPermissionModes map onto Oh My Pi's --approval-mode values. The first one is the default.
+var ompPermissionModes = []model.PermissionMode{
+	{ID: "always-ask", Label: "Ask first", Description: "Asks before each tool runs."},
+	{ID: "write", Label: "Auto-accept edits", Description: "Edits files without asking. Other tools still ask."},
+	{ID: "yolo", Label: "Full access", Description: "Runs every tool without asking. Use only in repos you trust."},
+}
+
+// openCodePermissionModes map onto OpenCode's run flags. Only "auto" changes anything (--auto).
+var openCodePermissionModes = []model.PermissionMode{
+	{ID: "ask", Label: "Ask first", Description: "Uses OpenCode's own permission settings."},
+	{ID: "auto", Label: "Full access", Description: "Approves every tool that OpenCode's config does not explicitly deny."},
+}
+
 func (p OMP) Capabilities() model.Capabilities {
-	return otherCaps(ompModelList())
+	c := otherCaps(ompModelList())
+	c.PermissionModes = ompPermissionModes
+	return c
 }
 func (p OpenCode) Capabilities() model.Capabilities {
-	return otherCaps(openCodeModelList())
+	c := otherCaps(openCodeModelList())
+	c.PermissionModes = openCodePermissionModes
+	return c
 }
 
 // ---- model discovery ---------------------------------------------------------
@@ -126,10 +143,10 @@ func fetchOMPModels() []model.ModelOption {
 			label = id
 		}
 		out2 = append(out2, model.ModelOption{
-			ID:      id,
-			Label:   label,
-			Group:   m.Provider,
-			Effort:  m.Thinking,
+			ID:     id,
+			Label:  label,
+			Group:  m.Provider,
+			Effort: m.Thinking,
 		})
 	}
 	return out2
@@ -172,6 +189,12 @@ func (p OMP) Run(ctx context.Context, spec Spec, emit func(Update)) error {
 	if len(spec.Images) != 0 {
 		return errors.New("image attachments are not supported for Oh My Pi yet")
 	}
+	parser := &ompParser{prefix: fmt.Sprintf("omp-%d", time.Now().UnixNano())}
+	return runProcess(ctx, procSpec{Bin: d.Path, Args: ompArgs(spec), Dir: spec.RepoPath, Stdin: spec.Prompt}, parser.parse, emit)
+}
+
+// ompArgs builds the Oh My Pi command line for one turn. The prompt is sent on stdin.
+func ompArgs(spec Spec) []string {
 	args := []string{"--print", "--mode", "json"}
 	if spec.Resume && spec.SessionID != "" {
 		args = append(args, "--resume", spec.SessionID)
@@ -179,14 +202,26 @@ func (p OMP) Run(ctx context.Context, spec Spec, emit func(Update)) error {
 	if spec.Model != "" {
 		args = append(args, "--model", spec.Model)
 	}
-	parser := &ompParser{prefix: fmt.Sprintf("omp-%d", time.Now().UnixNano())}
-	return runProcess(ctx, procSpec{Bin: d.Path, Args: args, Dir: spec.RepoPath, Stdin: spec.Prompt}, parser.parse, emit)
+	if spec.PermissionMode != "" {
+		args = append(args, "--approval-mode", spec.PermissionMode)
+	}
+	// Thinking does not persist across sessions, so it is sent on every turn.
+	if spec.Effort != "" {
+		args = append(args, "--thinking", spec.Effort)
+	}
+	return args
 }
 func (p OpenCode) Run(ctx context.Context, spec Spec, emit func(Update)) error {
 	d := p.Detect()
 	if !d.Available {
 		return errors.New("OpenCode is not installed or not on PATH")
 	}
+	parser := &openCodeParser{}
+	return runProcess(ctx, procSpec{Bin: d.Path, Args: openCodeArgs(spec), Dir: spec.RepoPath}, parser.parse, emit)
+}
+
+// openCodeArgs builds the OpenCode command line for one turn.
+func openCodeArgs(spec Spec) []string {
 	args := []string{"run", "--format", "json"}
 	if spec.Resume && spec.SessionID != "" {
 		args = append(args, "--session", spec.SessionID)
@@ -194,12 +229,13 @@ func (p OpenCode) Run(ctx context.Context, spec Spec, emit func(Update)) error {
 	if spec.Model != "" {
 		args = append(args, "--model", spec.Model)
 	}
+	if spec.PermissionMode == "auto" {
+		args = append(args, "--auto")
+	}
 	for _, img := range spec.Images {
 		args = append(args, "--file", img.Path)
 	}
-	args = append(args, "--", spec.Prompt)
-	parser := &openCodeParser{}
-	return runProcess(ctx, procSpec{Bin: d.Path, Args: args, Dir: spec.RepoPath}, parser.parse, emit)
+	return append(args, "--", spec.Prompt)
 }
 
 type ompParser struct {
@@ -212,8 +248,8 @@ func (p *ompParser) parse(line []byte) []Update {
 		Type    string `json:"type"`
 		ID      string `json:"id"`
 		Message struct {
-			Role         string `json:"role"`
-			Content      []struct {
+			Role    string `json:"role"`
+			Content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
 			} `json:"content"`

@@ -17,8 +17,8 @@ import type {
 } from '../types'
 
 // Lazily loaded so the module still imports when the bindings are absent.
-type Runtime = typeof import('../../wailsjs/runtime/runtime')
-type Bindings = typeof import('../../wailsjs/go/main/App')
+type Runtime = typeof import('@wailsio/runtime')
+type Bindings = typeof import('../../bindings/orbit/app')
 
 let bindings: Bindings | null = null
 let runtime: Runtime | null = null
@@ -26,15 +26,15 @@ let runtime: Runtime | null = null
 export const EVENT_NAME = 'orbit:events'
 
 export function inWails(): boolean {
-  return typeof window !== 'undefined' && 'go' in window
+  return typeof window !== 'undefined' && '_wails' in window
 }
 
 async function load(): Promise<void> {
   if (bindings && runtime) return
   if (!inWails()) throw new Error('Orbit’s backend is not connected.')
   const [b, r] = await Promise.all([
-    import('../../wailsjs/go/main/App'),
-    import('../../wailsjs/runtime/runtime'),
+    import('../../bindings/orbit/app'),
+    import('@wailsio/runtime'),
   ])
   bindings = b as unknown as Bindings
   runtime = r as unknown as Runtime
@@ -52,7 +52,7 @@ export function onEvents(handler: (batch: OrbitEvent[]) => void): () => void {
   let cancelled = false
   void load().then(() => {
     if (cancelled || !runtime) return
-    off = runtime.EventsOn(EVENT_NAME, (batch: OrbitEvent[]) => handler(batch)) as unknown as (() => void) | undefined
+    off = runtime.Events.On(EVENT_NAME, (event) => handler(event.data as OrbitEvent[])) as unknown as (() => void) | undefined
   })
   return () => {
     cancelled = true
@@ -128,7 +128,7 @@ export function onBrowserPane(handler: (s: BrowserPaneState) => void): () => voi
   let cancelled = false
   void load().then(() => {
     if (cancelled || !runtime) return
-    off = runtime.EventsOn('browser:pane', (s: BrowserPaneState) => handler(s)) as unknown as () => void
+    off = runtime.Events.On('browser:pane', (event) => handler(event.data as BrowserPaneState)) as unknown as () => void
   })
   return () => {
     cancelled = true
@@ -148,8 +148,8 @@ export function onTerminalEvents(handlers: TerminalHandlers): () => void {
   let cancelled = false
   void load().then(() => {
     if (cancelled || !runtime) return
-    const outputOff = runtime.EventsOn('terminal:output', (e: { id: string; data: string }) => handlers.output(e.id, e.data))
-    const exitOff = runtime.EventsOn('terminal:exit', (e: { id: string }) => handlers.exit(e.id))
+    const outputOff = runtime.Events.On('terminal:output', (event) => { const e = event.data as { id: string; data: string }; handlers.output(e.id, e.data) })
+    const exitOff = runtime.Events.On('terminal:exit', (event) => { const e = event.data as { id: string }; handlers.exit(e.id) })
     offs.push(outputOff as unknown as () => void, exitOff as unknown as () => void)
   })
   return () => {

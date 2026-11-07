@@ -5,7 +5,7 @@
 # Orbit
 
 > **One galaxy per project. One planet per agent.**  
-> A Wails v2 desktop app that orchestrates Claude Code and Codex CLI agents inside your git repositories — with a built-in terminal, diff review, conflict detection, and a native browser.
+> A Wails v3 desktop app that orchestrates Claude Code and Codex CLI agents inside your git repositories — with a built-in terminal, diff review, conflict detection, and a native browser.
 
 ## ✨ Features
 
@@ -21,12 +21,12 @@
 ## 🚀 Quick start
 
 ```bash
-# Prerequisites: Go, Node.js, npm, Git, Wails v2 CLI
+# Prerequisites: Go, Node.js, npm, Git, Wails v3 CLI
 # plus the agent CLIs you want (claude, codex) on PATH
 
 git clone https://github.com/spoiled/Orbit.git
 cd Orbit
-wails dev
+wails3 dev -config build/config.yml
 ```
 
 Open the dev server at `http://localhost:34115` to call Go methods from devtools, or use the app window directly.
@@ -35,15 +35,15 @@ Open the dev server at `http://localhost:34115` to call Go methods from devtools
 
 ```bash
 # Production build
-wails build
+wails3 build
 
-# Output: build/bin/Orbit (or Orbit.exe on Windows)
+# Output: bin/Orbit (or Orbit.exe on Windows)
 ```
 
 Platform notes:
 
 - **Windows** — full feature set, including the native browser view.
-- **macOS / Linux** — build on the target OS with Go, Node, npm, Git, and Wails v2. The terminal uses `$SHELL` (falling back to `/bin/sh`); the native browser view currently falls back to the text view. Desktop runtime behavior on these platforms still needs verification.
+- **macOS / Linux** — build on the target OS with Go, Node, npm, Git, and Wails v3. The terminal uses `$SHELL` (falling back to `/bin/sh`); the native browser view currently falls back to the text view. Desktop runtime behavior on these platforms still needs verification.
 
 Install and sign in to the agent CLIs separately, and make sure they are on the `PATH` available to Orbit when launched.
 
@@ -83,7 +83,7 @@ Orbit/
 
 ## 📡 Backend ↔ frontend contract
 
-- Frontend calls Go through `frontend/src/lib/bridge.ts` (generated bindings in `frontend/wailsjs/` — do not edit).
+- Frontend calls Go through `frontend/src/lib/bridge.ts` (generated bindings in `frontend/bindings/` — do not edit).
 - Go pushes updates on the `orbit:events` channel; terminals use `terminal:output` / `terminal:exit`.
 - Empty collections serialize as `[]`, never `null`.
 
@@ -93,4 +93,4 @@ Issues and PRs welcome. Keep pure logic in `lib/` and `internal/` free of React/
 
 ---
 
-Built with [Wails v2](https://wails.io) · [React](https://react.dev) · [TypeScript](https://www.typescriptlang.org) · [Vite](https://vitejs.dev)
+Built with [Wails v3](https://wails.io) · [React](https://react.dev) · [TypeScript](https://www.typescriptlang.org) · [Vite](https://vitejs.dev)

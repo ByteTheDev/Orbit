@@ -18,7 +18,7 @@ jobs:
             platform: windows
           - os: macos-15
             platform: macos
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             platform: linux
     runs-on: ${{ matrix.os }}
     steps:
@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Install NSIS
         if: runner.os == 'Windows'
         run: |
@@ -51,33 +51,38 @@ jobs:
       - name: Test Go
         run: go test ./...
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - name: Build Windows installer
         if: runner.os == 'Windows'
-        run: wails build -nsis
+        run: |
+          wails3 build
+          wails3 package
       - name: Build macOS and Linux application
         if: runner.os != 'Windows'
-        run: wails build
+        run: wails3 build
+      - name: Package macOS application
+        if: runner.os == 'macOS'
+        run: wails3 package
       - name: Package macOS installer
         if: runner.os == 'macOS'
-        run: pkgbuild --component build/bin/Orbit.app --install-location /Applications build/bin/Orbit-macos.pkg
+        run: pkgbuild --component bin/Orbit.app --install-location /Applications bin/Orbit-macos.pkg
       - name: Package Linux installer
         if: runner.os == 'Linux'
         run: |
           mkdir -p package/DEBIAN package/usr/bin package/usr/share/applications package/usr/share/icons/hicolor/256x256/apps
-          install -m 755 build/bin/Orbit package/usr/bin/orbit
+          install -m 755 bin/Orbit package/usr/bin/orbit
           install -m 644 build/appicon.png package/usr/share/icons/hicolor/256x256/apps/orbit.png
           printf '[Desktop Entry]\nType=Application\nName=Orbit\nExec=orbit\nIcon=orbit\nCategories=Development;\nTerminal=false\n' > package/usr/share/applications/orbit.desktop
-          printf 'Package: orbit\nVersion: 1.0.0\nArchitecture: amd64\nMaintainer: Orbit <spoiledmonster13@gmail.com>\nDepends: libgtk-3-0, libwebkit2gtk-4.0-37\nDescription: Desktop orchestrator for coding agents\n' > package/DEBIAN/control
-          dpkg-deb --build --root-owner-group package build/bin/Orbit-linux-amd64.deb
-          dpkg-deb --info build/bin/Orbit-linux-amd64.deb
+          printf 'Package: orbit\nVersion: 1.0.0\nArchitecture: amd64\nMaintainer: Orbit <spoiledmonster13@gmail.com>\nDepends: libgtk-4-1, libwebkitgtk-6.0-4\nDescription: Desktop orchestrator for coding agents\n' > package/DEBIAN/control
+          dpkg-deb --build --root-owner-group package bin/Orbit-linux-amd64.deb
+          dpkg-deb --info bin/Orbit-linux-amd64.deb
       - uses: actions/upload-artifact@v4
         with:
           name: orbit-installer-${{ matrix.platform }}
           path: |
-            build/bin/*-installer.exe
-            build/bin/*.pkg
-            build/bin/*.deb
+            bin/*-installer.exe
+            bin/*.pkg
+            bin/*.deb
           if-no-files-found: error
 
   release:
