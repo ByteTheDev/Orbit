@@ -174,14 +174,18 @@ func pathCandidates(name string) []string {
 		}
 		for _, ext := range exts {
 			full := filepath.Join(dir, name+ext)
-			if seen[strings.ToLower(full)] {
+			key := full
+			if runtime.GOOS == "windows" {
+				key = strings.ToLower(full)
+			}
+			if seen[key] {
 				continue
 			}
 			info, err := os.Stat(full)
 			if err != nil || info.IsDir() {
 				continue
 			}
-			seen[strings.ToLower(full)] = true
+			seen[key] = true
 			out = append(out, full)
 		}
 	}

@@ -215,6 +215,8 @@ export function drawUniverse(ctx: CanvasRenderingContext2D, view: ViewState, bac
 
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
+    // A soft dark backdrop keeps the name readable over bright nebula without adding a shadow blur.
+    drawLabelBackdrop(ctx, box)
     ctx.font = '600 14px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
     ctx.fillStyle = 'rgba(244,244,245,0.9)'
     if (project) drawProjectBadge(ctx, s.x - nameW / 2 - 14, labelY + 7, project)
@@ -1070,6 +1072,18 @@ function drawRock(
     ctx.textBaseline = 'top'
     ctx.fillText(k.name, s.x, s.y + R + 3)
   }
+}
+
+/** A faint, rounded dark pill behind a system's label. Kept very low-alpha so it reads as depth, not a box. */
+function drawLabelBackdrop(ctx: CanvasRenderingContext2D, box: LabelBox): void {
+  const x = box.x0 + 6
+  const y = box.y0 - 2
+  const width = box.x1 - box.x0 - 12
+  const height = box.y1 - box.y0 + 4
+  ctx.fillStyle = 'rgba(9,9,11,0.38)'
+  ctx.beginPath()
+  ctx.roundRect(x, y, width, height, 8)
+  ctx.fill()
 }
 
 function drawBadge(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color: string): void {

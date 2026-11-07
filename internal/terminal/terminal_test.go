@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -53,7 +54,7 @@ func TestUnknownTerminalIsNotFound(t *testing.T) {
 }
 
 // TestShellRoundTrip starts a real shell, types a command, and checks the output comes back.
-// It needs Windows (ConPTY) and is skipped in -short runs.
+// It uses the platform shell and is skipped in -short runs.
 func TestShellRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts a real shell")
@@ -73,7 +74,11 @@ func TestShellRoundTrip(t *testing.T) {
 	}
 	defer m.CloseAll()
 
-	if err := m.Write("rt", "Write-Output 'orbit-terminal-ok'\r\n"); err != nil {
+	command := "printf 'orbit-terminal-ok\\n'\n"
+	if runtime.GOOS == "windows" {
+		command = "Write-Output 'orbit-terminal-ok'\r\n"
+	}
+	if err := m.Write("rt", command); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(20 * time.Second)

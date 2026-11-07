@@ -46,6 +46,7 @@ var (
 	procPostMessageW             = user32.NewProc("PostMessageW")
 	procPostQuitMessage          = user32.NewProc("PostQuitMessage")
 	procMoveWindow               = user32.NewProc("MoveWindow")
+	procSetWindowPos             = user32.NewProc("SetWindowPos")
 	procShowWindow               = user32.NewProc("ShowWindow")
 	procSetTimer                 = user32.NewProc("SetTimer")
 	procKillTimer                = user32.NewProc("KillTimer")
@@ -363,7 +364,16 @@ func (p *Pane) SetBounds(x, y, w, h int) {
 
 // Show makes the view visible.
 func (p *Pane) Show() {
-	p.post(func() { procShowWindow.Call(p.hwnd, swShow) })
+	p.post(func() {
+		// The application's WebView is another child of the same window. Make
+		// the page pane the top sibling each time it is shown, including after
+		// the dialog has been closed and reopened.
+		const swpNoSize = 0x0001
+		const swpNoMove = 0x0002
+		const swpNoActivate = 0x0010
+		procSetWindowPos.Call(p.hwnd, 0, 0, 0, 0, 0, swpNoSize|swpNoMove|swpNoActivate)
+		procShowWindow.Call(p.hwnd, swShow)
+	})
 }
 
 // Hide hides the view and keeps the page, so it can be shown again without reloading.

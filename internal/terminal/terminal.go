@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"sync"
 	"unicode/utf8"
 
@@ -234,14 +233,4 @@ func clampSize(n int) int {
 		return maxCells
 	}
 	return n
-}
-
-// shell prefers PowerShell 7 when it is installed and falls back to Windows PowerShell.
-func shell() string {
-	for _, name := range []string{"pwsh.exe", "powershell.exe"} {
-		if path, err := exec.LookPath(name); err == nil {
-			return path
-		}
-	}
-	return "powershell.exe"
 }

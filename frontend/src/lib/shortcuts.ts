@@ -1,4 +1,4 @@
-// The keyboard map. Shown in the shortcuts dialog and implemented in App.tsx.
+// The keyboard map. Shown in Settings > Keyboard and implemented in App.tsx.
 export const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'N', action: 'Launch a new agent' },
   { keys: 'P', action: 'Create a project' },
@@ -16,7 +16,7 @@ export const SHORTCUTS: { keys: string; action: string }[] = [
   { keys: 'Right-click a planet', action: 'Open the agent menu' },
   { keys: 'Drag a planet', action: 'Reposition it within its system' },
   { keys: 'Esc', action: 'Close a dialog, menu or the inspector' },
-  { keys: '?', action: 'Show this list' },
+  { keys: '?', action: 'Open settings at the keyboard shortcuts' },
   { keys: ',', action: 'Open settings' },
 ]
 

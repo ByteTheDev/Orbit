@@ -1,0 +1,465 @@
+<!doctype html>
+<!-- type: software (SKILL.md section 1: an app, site-kind software). Plan (sections.md, Software):
+     hero collage (dealt, --has ui), nav-centre, features-2x2 (two screens), app-frame, split-text-left
+     (the galaxy: each project a sun, its agents planets), steps as ruled rows, hub-tools diagram card,
+     faq, footer.closing (close-type, footer-columns). Buttons solid, radius sharp, mark ring.
+     No photographs: the product's own UI is the picture. No effect ground, no moment: the galaxy is a
+     drawn picture of the app's own model (projects are suns, agents are planets). -->
+<html lang="en" data-type="software" data-radius="sharp" data-buttons="solid" data-motion class="ic-dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Orbit: a desktop app for running coding agents</title>
+<meta name="description" content="Orbit runs Claude Code and Codex in every project. See each agent's state, its files and its conflicts in one window.">
+<meta name="site-kind" content="software">
+<meta name="page-type" content="software">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/system.css">
+<link rel="stylesheet" href="assets/ui/cards.css">
+<link rel="stylesheet" href="assets/motion/motion.css">
+<link rel="stylesheet" href="assets/backgrounds/backgrounds.css">
+<link rel="stylesheet" href="assets/layout/layout.css">
+<link rel="stylesheet" href="assets/icons/icon.css">
+<style>
+:root {
+  --p-bg: #09090b; --p-surface: #141416; --p-ink: #f4f4f5; --p-muted: #a1a1aa;
+  --p-accent: #d97757; --p-accent-ink: #09090b; --p-action: #d97757; --p-action-ink: #09090b;
+  --p-inv-bg: #f4f4f5; --p-inv-surface: #e1e1e2; --p-inv-ink: #09090b; --p-inv-muted: #565658;
+  --p-inv-accent: #09090b; --p-inv-accent-ink: #f4f4f5; --p-inv-action: #09090b; --p-inv-action-ink: #f4f4f5;
+  --font-display: "Geist", system-ui, sans-serif;
+  --font-text: "Geist", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --display-weight: 500;
+  --display-tracking: -0.035em;
+  --display-tracking-xl: -0.045em;
+  /* the page's lit ground for panels and UI windows: Orbit's own dark surfaces from the app */
+  --ground-bg: #09090b; --ground-surface: #18181b; --ground-ink: #f4f4f5; --ground-muted: #a1a1aa; --ground-accent: #d97757;
+  --fx-bg: #111114; --fx-surface: #18181b; --fx-ink: #f4f4f5; --fx-muted: #a1a1aa; --fx-accent: #d97757; --fx-accent-ink: #09090b;
+}
+</style>
+<link rel="stylesheet" href="assets/ui/base.css">
+<link rel="stylesheet" href="assets/ui/window/fragment.css">
+<link rel="stylesheet" href="assets/ui/notify/fragment.css">
+<link rel="stylesheet" href="assets/ui/chat/fragment.css">
+<link rel="stylesheet" href="assets/ui/terminal-run/fragment.css">
+<link rel="stylesheet" href="assets/diagrams/diagram.css">
+<script src="assets/backgrounds/backgrounds.js"></script>
+<style>
+  /* page CSS: only what sits inside a visual and the kit lacks */
+  #features .panel { --p-h: 270px; }
+  .hero__art { background: var(--p-surface); border: 1px solid var(--p-line, rgb(255 255 255 / .08)); }
+  /* the hero's small card sits in the frame's lower-left corner, inside the window's edge */
+  .hero__art > .ly-piece--note { top: auto; left: 32px; bottom: 32px; width: 340px; }
+  @media (max-width: 1023px) { .hero__art > .ly-piece--note { left: 24px; bottom: 24px; width: min(340px, calc(100% - 48px)); } }
+  #features .ui-note__btn { display: none; }
+  @media (min-width: 1024px) { #features .ui-note__btn { display: inline-flex; } }
+  .hero__proof { color: var(--p-muted); }
+
+  /* app-frame: the list and the open pane in one window (sections-library.md, app-frame) */
+  .app.ui { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); margin-top: var(--s-7);
+    background: var(--u-bg); border: 1px solid var(--u-border); border-radius: var(--u-r); box-shadow: var(--u-shadow); }
+  .app > .app__pane { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+  .app > .app__pane + .app__pane { border-left: 1px solid var(--u-line); }
+  .app > .app__pane > .ui-panel { width: 100%; border: 0; border-radius: 0; box-shadow: none; }
+  .app > .app__pane::after { content: ""; position: absolute; inset: auto 0 0 0; height: 64px; background: linear-gradient(transparent, var(--u-bg)); pointer-events: none; }
+  @media (min-width: 1024px) and (max-width: 1279px) { .app.ui { grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); } }
+  @media (max-width: 1023px) {
+    .app.ui { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .app > .app__pane--list { max-height: 252px; }
+    .app > .app__pane--list::after { display: none; }
+    .app .ui-win__side { display: none; }
+    .app .ui-win__body { grid-template-columns: minmax(0, 1fr); }
+    .app > .app__pane + .app__pane { border-left: 0; border-top: 1px solid var(--u-line); }
+  }
+  @media (max-width: 639px) {
+    .app.ui { grid-template-rows: minmax(0, 1fr); }
+    .app > .app__pane--list { display: none; }
+    .app > .app__pane + .app__pane { border-top: 0; }
+  }
+
+  /* project visual: the galaxy (drawn, not a screenshot) */
+  .galaxy { aspect-ratio: 5 / 4; border-radius: var(--r-lg); overflow: hidden; border: 1px solid rgb(255 255 255 / .08); background: #0b0b0e; }
+  .galaxy svg { display: block; width: 100%; height: 100%; }
+
+  /* conflict card (features 2) */
+  .conflict { position: relative; height: 100%; min-height: 240px; }
+  .conflict svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .conflict__agent { position: absolute; display: flex; align-items: center; gap: 8px; font: 500 14px/1 var(--font-text); color: var(--p-ink);
+    background: var(--p-bg); border: 1px solid rgb(255 255 255 / .1); border-radius: var(--r-sm); padding: 8px 10px; }
+  .conflict__agent img { width: 18px; height: 18px; }
+  .conflict__file { position: absolute; right: 24px; top: 50%; transform: translateY(-50%); font: 500 13px/1 var(--font-mono); color: var(--p-ink);
+    background: var(--p-bg); border: 1px solid #f59e0b; border-radius: var(--r-sm); padding: 10px 12px; }
+  .conflict__count { display: block; margin-top: 8px; font: 400 12px/1 var(--font-text); color: #fcd34d; }
+
+  /* diff card (features 3) */
+  .diffcard { background: var(--p-bg); border: 1px solid rgb(255 255 255 / .08); border-radius: var(--r-md); overflow: hidden; font: 400 13px/22px var(--font-mono); }
+  .diffcard__head { display: flex; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid rgb(255 255 255 / .08); color: var(--p-ink); font-family: var(--font-text); font-size: 13px; }
+  .diffcard__head em { font-style: normal; color: #4ade80; margin-left: 8px; }
+  .diffcard__head i { font-style: normal; color: #f87171; }
+  .diffcard__row { display: grid; grid-template-columns: 28px minmax(0, 1fr); padding: 0 12px; color: var(--p-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .diffcard__row.is-add { background: rgb(74 222 128 / .10); color: #bbf7d0; }
+  .diffcard__row.is-del { background: rgb(248 113 113 / .10); color: #fecaca; }
+  .diffcard__row span:first-child { color: rgb(161 161 170 / .6); }
+
+  /* steps: a real icon, the step's name, its line and its number; parted by air, not rules */
+  .steps-list { list-style: none; margin: var(--s-8) 0 0; padding: 0; display: grid; gap: var(--s-4); }
+  .steps-list li { display: grid; grid-template-columns: 48px minmax(0, 4fr) minmax(0, 6fr) minmax(0, 1fr); gap: var(--s-6);
+    align-items: center; padding: var(--s-4) var(--s-5); background: var(--p-surface); border-radius: var(--r-md); }
+  .steps-list .steps-list__icon { display: flex; gap: 4px; align-items: center; }
+  .steps-list .steps-list__icon img { width: 24px; height: 24px; }
+  .steps-list .steps-list__icon svg { width: 24px; height: 24px; color: var(--p-ink); }
+  .steps-list .steps-list__name { font: 500 20px/28px var(--font-text); color: var(--p-ink); }
+  .steps-list p { margin: 0; font: 400 16px/26px var(--font-text); color: var(--p-muted); }
+  .steps-list .steps-list__num { justify-self: end; font: 500 14px/1 var(--font-mono); color: var(--p-muted); }
+  @media (max-width: 639px) { .steps-list li { grid-template-columns: 40px minmax(0, 1fr); gap: var(--s-2) var(--s-4); } .steps-list p { grid-column: 2; } .steps-list .steps-list__name { grid-column: 2; } .steps-list .steps-list__num { display: none; } }
+
+  /* the open pane fills the window's height; the list keeps its rows whole */
+  .app > .app__pane--open { display: flex; background: var(--u-bg); }
+  .app > .app__pane--open > .ui { flex: 1; height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+  @media (min-width: 1280px) { .app.ui { grid-template-columns: minmax(0, 6fr) minmax(0, 6fr); } }
+
+  @media (max-width: 639px) { .galaxy { aspect-ratio: 4 / 3; } #features .panel { --p-h: 160px; } .steps-list { margin-top: var(--s-5); gap: var(--s-3); } }
+  @media (min-width: 1024px) and (max-width: 1279px) { .steps-list { margin-top: var(--s-6); } #faq .faq__item { padding-block: var(--s-3); } }
+  /* the hub diagram's nodes stand still: no entrance transition as the section scrolls into view */
+  #agents .dg-node { transition: none; }
+  @media (max-width: 639px) { #agents .dg { min-height: 300px; } }
+  .faq-icon { width: 64px; height: 64px; border-radius: var(--r-md); margin-bottom: var(--s-6); }
+  @media (min-width: 640px) and (max-width: 1023px) { .galaxy { aspect-ratio: 16 / 10; } }
+  @media (min-width: 1024px) and (max-width: 1279px) { #features .panel { --p-h: 170px; } }
+  @media (min-width: 640px) and (max-width: 1023px) { .steps-list { gap: var(--s-5); } .steps-list li { padding: var(--s-6) var(--s-5); } }
+</style>
+</head>
+<body>
+<!-- type: software · deal: hero collage, nav nav-centre, features features-2x2, app-frame, split-text-left (galaxy),
+     steps (rows), hub-tools (diagram), faq, footer.closing close-type + footer-columns · mark ring · buttons solid -->
+
+<header class="nav nav--centre">
+  <div class="wrap nav__bar">
+    <a class="nav__logo" href="#top"><span class="mark" data-mark="ring" aria-hidden="true"></span>Orbit</a>
+    <nav class="nav__links" aria-label="Main">
+      <div class="nav__item"><a class="nav__link" href="#project">Projects</a></div>
+      <div class="nav__item"><a class="nav__link" href="#app">Agents</a></div>
+      <div class="nav__item"><a class="nav__link" href="#faq">Questions</a></div>
+    </nav>
+    <div class="nav__actions">
+      <a class="btn btn--primary" href="#start">Run your first agent</a>
+    </div>
+    <button class="nav__toggle" type="button" aria-expanded="false" aria-label="Menu"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 5h14M2 13h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+  </div>
+</header>
+
+<main id="top">
+  <!-- HERO (collage, dealt): the words on span-5, the app window on a lit ground, cut by the frame, one small card over it -->
+  <section class="hero hero--collage" aria-labelledby="hero-h">
+    <div class="wrap"><div class="hero-text grid hero__grid">
+      <div class="hero__text span-6">
+        <h1 id="hero-h">A desktop app for running coding agents</h1>
+        <p class="hero__lead">Orbit runs Claude Code and Codex in every project at once. You see each agent's status, its chat and every file it changes.</p>
+        <div class="btn-row">
+          <a class="btn btn--primary" href="#start">Run your first agent<svg class="m-arrow" viewBox="0 0 12 12" aria-hidden="true"><path class="m-arrow__stem" d="M1 6h8"/><path class="m-arrow__head" d="M4.5 2.5 8 6l-3.5 3.5"/></svg></a>
+          <a class="btn btn--secondary" href="#app">See the app</a>
+        </div>
+        <p class="hero__proof">Shows 8 agent states, from idle to failed, for every agent in every project.</p>
+      </div>
+      <div class="hero__art span-6 start-7" role="img" aria-label="Orbit's agent list: nine agents across three projects, with their states">
+        <div class="ly-piece ly-piece--main ui ui-panel ui-win" aria-hidden="true" data-ui="window">
+          <div class="ui-win__bar">
+            <span class="ui-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="ui-win__crumb"><img class="ui-brand" src="assets/icons/orbit.png" alt="" width="16" height="16">Orbit <i>/</i> <b>Agents</b></span>
+            <span class="ui-spacer"></span>
+            <span class="ui-win__search"><svg class="ui-icon" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><span class="ui-win__ph">Search</span><span class="ui-kbd">/</span></span>
+          </div>
+          <div class="ui-win__body">
+            <nav class="ui-win__side">
+              <span class="ui-win__nav is-on"><svg class="ui-icon" viewBox="0 0 16 16"><path d="M2.5 9h3l1 1.5h3l1-1.5h3"/><path d="M2.5 9 4 3.5h8L13.5 9v3.5h-11z"/></svg>All<em>9</em></span>
+              <span class="ui-win__nav"><svg class="ui-icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>Running<em>3</em></span>
+              <span class="ui-win__nav"><svg class="ui-icon" viewBox="0 0 16 16"><circle cx="8" cy="6" r="2.5"/><path d="M3.5 13.5c.6-2.3 2.4-3.5 4.5-3.5s3.9 1.2 4.5 3.5"/></svg>Needs you<em>1</em></span>
+              <span class="ui-win__nav"><svg class="ui-icon" viewBox="0 0 16 16"><path d="m3.5 8.4 2.8 2.8 6.2-6.4"/></svg>Done<em>2</em></span>
+              <span class="ui-win__label">Projects</span>
+              <span class="ui-win__nav"><span class="ui-win__hash">#</span>orbit</span>
+              <span class="ui-win__nav"><span class="ui-win__hash">#</span>billing-api</span>
+              <span class="ui-win__nav"><span class="ui-win__hash">#</span>docs-site</span>
+            </nav>
+            <div class="ui-win__main">
+              <div class="ui-win__cols"><span>Agent</span><span>Task</span><span>State</span><span>Age</span></div>
+              <ul class="ui-win__rows">
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="1">CC</span><span class="ui-win__who">Claude Code · billing-api</span><span class="ui-win__sub">Fix invoice retry backoff</span><span class="ui-win__st" data-st>Writing</span><span class="ui-win__age">2m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="3">CX</span><span class="ui-win__who">Codex · orbit</span><span class="ui-win__sub">Add conflict tests for two writers</span><span class="ui-win__st" data-st>Thinking</span><span class="ui-win__age">6m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="2">CX</span><span class="ui-win__who">Codex · billing-api</span><span class="ui-win__sub">Confirm the retry limit</span><span class="ui-win__st is-you" data-st>Needs you</span><span class="ui-win__age">18m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="4">CC</span><span class="ui-win__who">Claude Code · docs-site</span><span class="ui-win__sub">Update the install page</span><span class="ui-win__st is-done" data-st>Completed</span><span class="ui-win__age">11m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="5">CC</span><span class="ui-win__who">Claude Code · orbit</span><span class="ui-win__sub">Refactor the galaxy layout</span><span class="ui-win__st" data-st>Reading</span><span class="ui-win__age">19m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="3">CX</span><span class="ui-win__who">Codex · docs-site</span><span class="ui-win__sub">Build the site</span><span class="ui-win__st" data-st>Failed</span><span class="ui-win__age">31m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="1">CC</span><span class="ui-win__who">Claude Code · orbit</span><span class="ui-win__sub">Persist agent history</span><span class="ui-win__st" data-st>Stopped</span><span class="ui-win__age">40m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="2">CX</span><span class="ui-win__who">Codex · orbit</span><span class="ui-win__sub">Write the release notes</span><span class="ui-win__st" data-st>Waiting</span><span class="ui-win__age">52m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="4">CC</span><span class="ui-win__who">Claude Code · billing-api</span><span class="ui-win__sub">Add the retry test</span><span class="ui-win__st is-done" data-st>Completed</span><span class="ui-win__age">1h</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div class="ly-piece ly-piece--note ui ui-notify" aria-hidden="true">
+          <ul class="ui-notify__list">
+            <li class="ui-note"><span class="ui-note__av ui-note__ico"><img src="assets/icons/codex.svg" alt="" width="20" height="20"></span><span class="ui-note__text"><span class="ui-note__title">Codex needs you<time>now</time></span><span class="ui-note__body">billing-api: confirm the retry limit</span></span></li>
+            <li class="ui-note"><span class="ui-note__av ui-note__ico"><img src="assets/icons/claude.svg" alt="" width="20" height="20"></span><span class="ui-note__text"><span class="ui-note__title">Claude Code completed<time>4m</time></span><span class="ui-note__body">docs-site: install page updated</span></span></li>
+          </ul>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- FEATURES: features-2x2, two screens (row 1 the h2 and two tiles, row 2 the next two) -->
+  <section class="section g2" id="features" aria-labelledby="features-h">
+    <div class="wrap">
+      <div class="group">
+        <div class="section-head">
+          <h2 id="features-h">Everything each agent does, in one place. <span class="muted">Status, files, diffs and conflicts.</span></h2>
+        </div>
+        <div class="grid">
+          <article class="card card--row span-6">
+            <h3>Shows each agent's state</h3>
+            <p>Thinking, writing, reading, waiting, completed, failed or stopped, one line per agent.</p>
+            <div class="panel" role="img" aria-label="Two notifications: Codex needs an answer on billing-api, and Claude Code finished the docs">
+              <div class="stage stage--fade-b"><div class="at-rise fit" style="--fit-max:400px;--ax:max(24px, 50% - 200px);--ay:48px;--ay-sm:48px">
+                <div class="ui ui-notify" aria-hidden="true">
+                  <ul class="ui-notify__list">
+                    <li class="ui-note"><span class="ui-note__av ui-note__ico"><img src="assets/icons/codex.svg" alt="" width="20" height="20"></span><span class="ui-note__text"><span class="ui-note__title">Codex needs you<time>now</time></span><span class="ui-note__body">billing-api: confirm the retry limit</span></span><span class="ui-btn ui-btn--sm ui-note__btn">Open</span></li>
+                    <li class="ui-note"><span class="ui-note__av ui-note__ico"><img src="assets/icons/claude.svg" alt="" width="20" height="20"></span><span class="ui-note__text"><span class="ui-note__title">Claude Code completed<time>4m</time></span><span class="ui-note__body">docs-site: install page updated</span></span></li>
+                    <li class="ui-note"><span class="ui-note__ico"><svg class="ui-icon" viewBox="0 0 16 16"><path d="m3.5 8.4 2.8 2.8 6.2-6.4"/></svg></span><span class="ui-note__text"><span class="ui-note__title">Orbit saved the project<time>12m</time></span><span class="ui-note__body">One file, written about a second after each change</span></span></li>
+                  </ul>
+                </div>
+              </div></div>
+            </div>
+          </article>
+          <article class="card card--row span-6">
+            <h3>Flags files two agents both change</h3>
+            <p>Orbit lists each file that two or more agents wrote in the same project.</p>
+            <div class="panel" role="img" aria-label="Claude Code and Codex both wrote src/billing/retry.ts">
+              <div class="stage"><div class="conflict">
+                <svg viewBox="0 0 400 300" preserveAspectRatio="none" aria-hidden="true">
+                  <path d="M170 70 C 250 70, 250 150, 300 150" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 5"/>
+                  <path d="M170 230 C 250 230, 250 150, 300 150" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 5"/>
+                </svg>
+                <span class="conflict__agent" style="left:24px;top:48px"><img src="assets/icons/claude.svg" alt="">Claude Code</span>
+                <span class="conflict__agent" style="left:24px;top:208px"><img src="assets/icons/codex.svg" alt="">Codex</span>
+                <span class="conflict__file" style="right:24px">src/billing/retry.ts<span class="conflict__count">Written by 2 agents</span></span>
+              </div></div>
+            </div>
+          </article>
+        </div>
+      </div>
+      <div class="grid">
+        <article class="card card--row span-6">
+          <h3>Reads each diff against HEAD</h3>
+          <p>Open any changed file and see its removed and added lines, numbered.</p>
+          <div class="panel" role="img" aria-label="A diff of src/billing/retry.ts with one line removed and two added">
+            <div class="stage"><div class="at-rise fit" style="--fit-max:400px;--ax:24px;--ay:24px;--ay-sm:24px">
+              <div class="diffcard">
+                <div class="diffcard__head"><span>src/billing/retry.ts</span><span><em>+2</em> <i>−1</i></span></div>
+                <div class="diffcard__row"><span>38</span><span>export async function retry(id, attempt) {</span></div>
+                <div class="diffcard__row"><span>39</span><span>  if (attempt > MAX_ATTEMPTS) throw new Error("gave up")</span></div>
+                <div class="diffcard__row"><span>40</span><span>  // back off before the next try</span></div>
+                <div class="diffcard__row"><span>41</span><span>  const wait = 2 ** attempt * 100</span></div>
+                <div class="diffcard__row is-del"><span>42</span><span>- return fetchInvoice(id)</span></div>
+                <div class="diffcard__row is-add"><span>42</span><span>+ const cap = Math.min(wait, 30_000)</span></div>
+                <div class="diffcard__row is-add"><span>43</span><span>+ return fetchInvoice(id, cap)</span></div>
+                <div class="diffcard__row"><span>44</span><span>}</span></div>
+                <div class="diffcard__row"><span>45</span><span>&nbsp;</span></div>
+                <div class="diffcard__row"><span>46</span><span>export const MAX_ATTEMPTS = 5</span></div>
+                <div class="diffcard__row"><span>47</span><span>&nbsp;</span></div>
+                <div class="diffcard__row"><span>48</span><span>// Two agents may edit this file: see conflicts</span></div>
+              </div>
+            </div></div>
+          </div>
+        </article>
+        <article class="card card--row span-6">
+          <h3>Resumes an agent where it stopped</h3>
+          <p>The next run continues the same session, so the agent keeps the history it had.</p>
+          <div class="panel" role="img" aria-label="A chat where Orbit resumes the billing agent's session">
+            <div class="stage stage--fade-b"><div class="at-rise fit" style="--fit-max:400px;--ax:max(24px, 50% - 200px);--ay:56px;--ay-sm:56px">
+              <div class="ui ui-panel ui-chat" aria-hidden="true">
+                <div class="ui-head"><span class="ui-agent" aria-hidden="true"></span><div class="ui-title">Claude Code</div><span class="ui-chat__online">Session 4f2a</span><span class="ui-spacer"></span></div>
+                <div class="ui-chat__body">
+                  <div class="ui-chat__day">Yesterday, 17:20</div>
+                  <div class="ui-msg ui-msg--me"><span class="ui-msg__text">Pick up the retry fix where you left off.</span></div>
+                  <div class="ui-msg ui-msg--bot">
+                    <span class="ui-agent ui-msg__av" aria-hidden="true"></span>
+                    <span class="ui-msg__col">
+                      <span class="ui-chat__answer">Resumed. <b>retry.ts</b> is done. Two files are left: <b>queue.ts</b> and its test.</span>
+                      <span class="ui-chat__srcs"><span class="ui-chat__src"><svg class="ui-icon" viewBox="0 0 16 16"><path d="M4 2.5h5l3 3v8H4z"/><path d="M9 2.5v3h3"/></svg>billing-api</span></span>
+                    </span>
+                  </div>
+                </div>
+                <div class="ui-chat__input"><span class="ui-chat__ph">Write a message</span><span class="ui-chat__send" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 13V3.5M3.8 7.5 8 3.3l4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+              </div>
+            </div></div>
+          </div>
+        </article>
+      </div>
+      <p><a class="link" href="#app">See every agent in one window</a></p>
+    </div>
+  </section>
+
+  <!-- APP-FRAME: the product big. The list of agents beside the open agent's terminal, one window across the wrap -->
+  <section class="section" id="app" aria-labelledby="app-h">
+    <div class="wrap">
+      <div class="grid">
+        <div class="span-6"><h2 id="app-h">Every agent in view</h2></div>
+        <div class="span-6 start-7"><p class="t-lead">Open an agent to see its chat, activity and files. The project's terminal sits beside it, so you can run the tests yourself.</p><p><a class="link" href="#features">See what the review shows</a></p></div>
+      </div>
+      <div class="ui app fill" role="img" aria-label="Orbit's agent list on the left and a terminal running billing-api's tests on the right" data-ui-pause-host>
+        <div class="app__pane app__pane--list ui-win">
+          <div class="ui-win__body" style="grid-template-columns: minmax(0,1fr)">
+            <div class="ui-win__main">
+              <div class="ui-win__cols"><span>Agent</span><span>Task</span><span>State</span><span>Age</span></div>
+              <ul class="ui-win__rows">
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="1">CC</span><span class="ui-win__who">Claude Code · billing-api</span><span class="ui-win__sub">Fix invoice retry backoff</span><span class="ui-win__st" data-st>Writing</span><span class="ui-win__age">2m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="3">CX</span><span class="ui-win__who">Codex · orbit</span><span class="ui-win__sub">Add conflict tests for two writers</span><span class="ui-win__st" data-st>Thinking</span><span class="ui-win__age">6m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="2">CX</span><span class="ui-win__who">Codex · billing-api</span><span class="ui-win__sub">Confirm the retry limit</span><span class="ui-win__st is-you" data-st>Needs you</span><span class="ui-win__age">18m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="4">CC</span><span class="ui-win__who">Claude Code · docs-site</span><span class="ui-win__sub">Update the install page</span><span class="ui-win__st is-done" data-st>Completed</span><span class="ui-win__age">11m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="5">CC</span><span class="ui-win__who">Claude Code · orbit</span><span class="ui-win__sub">Refactor the galaxy layout</span><span class="ui-win__st" data-st>Reading</span><span class="ui-win__age">19m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="3">CX</span><span class="ui-win__who">Codex · docs-site</span><span class="ui-win__sub">Build the site</span><span class="ui-win__st" data-st>Failed</span><span class="ui-win__age">31m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="1">CC</span><span class="ui-win__who">Claude Code · orbit</span><span class="ui-win__sub">Persist agent history</span><span class="ui-win__st" data-st>Stopped</span><span class="ui-win__age">40m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="2">CX</span><span class="ui-win__who">Codex · orbit</span><span class="ui-win__sub">Write the release notes</span><span class="ui-win__st" data-st>Waiting</span><span class="ui-win__age">52m</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="4">CC</span><span class="ui-win__who">Claude Code · billing-api</span><span class="ui-win__sub">Add the retry test</span><span class="ui-win__st is-done" data-st>Completed</span><span class="ui-win__age">1h</span></li>
+                <li class="ui-win__row" data-row><span class="ui-avatar" data-tone="5">CC</span><span class="ui-win__who">Claude Code · orbit</span><span class="ui-win__sub">Keep the galaxy in sync</span><span class="ui-win__st" data-st>Reading</span><span class="ui-win__age">2h</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div class="app__pane app__pane--open" data-ui-loop>
+          <div class="ui ui-panel ui-term" data-ui="terminal-run">
+            <div class="ui-term__head">
+              <span class="ui-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="ui-term__title">billing-api</span>
+              <span class="ui-meta">powershell</span>
+              <span class="ui-spacer"></span>
+              <span class="ui-chip ui-chip--plain ui-term__branch"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="3.5" r="1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="5.5" r="1.5"/><path d="M5 5v6M11 7c0 2.6-6 1.8-6 4"/></svg>main</span>
+            </div>
+            <div class="ui-term__screen" data-term-screen>
+              <div class="ui-term__track" data-term-track>
+                <div class="ui-term__ln ui-term__cmd"><span class="ui-term__cwd">~/<span class="ui-term__up">billing-api/</span></span><span class="ui-term__sig">$</span><span class="ui-term__typed" data-term-cmd>npm test -- retry</span></div>
+                <div class="ui-term__ln ui-term__meter" data-term-out data-term-meter><span class="ui-term__bar" style="--p:1"><i></i></span><span class="ui-term__count" data-term-count>4 of 4 files</span></div>
+                <div class="ui-term__ln ui-term__log" data-term-out data-term-step><svg class="ui-term__tick" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.4 2.8 2.8 6.2-6.4"/></svg><span class="ui-term__path">invoice/retry.test.ts</span><span class="ui-term__n">18 tests</span><span class="ui-term__t">412ms</span></div>
+                <div class="ui-term__ln ui-term__log" data-term-out data-term-step><svg class="ui-term__tick" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.4 2.8 2.8 6.2-6.4"/></svg><span class="ui-term__path">billing/backoff.test.ts</span><span class="ui-term__n">9 tests</span><span class="ui-term__t">188ms</span></div>
+                <div class="ui-term__ln ui-term__log" data-term-out data-term-step><svg class="ui-term__tick" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.4 2.8 2.8 6.2-6.4"/></svg><span class="ui-term__path">queue/worker.test.ts</span><span class="ui-term__n">12 tests</span><span class="ui-term__t">377ms</span></div>
+                <div class="ui-term__ln ui-term__log" data-term-out data-term-step><svg class="ui-term__tick" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.4 2.8 2.8 6.2-6.4"/></svg><span class="ui-term__path">billing/cap.test.ts</span><span class="ui-term__n">7 tests</span><span class="ui-term__t">96ms</span></div>
+                <div class="ui-term__ln ui-term__gap" data-term-out aria-hidden="true"></div>
+                <div class="ui-term__ln ui-term__sum" data-term-out><span class="ui-term__key">Test files</span><span class="ui-term__val">4 passed</span><span class="ui-term__dim">(4)</span></div>
+                <div class="ui-term__ln ui-term__sum" data-term-out><span class="ui-term__key">Tests</span><span class="ui-term__val">46 passed</span><span class="ui-term__dim">(46)</span></div>
+                <div class="ui-term__ln ui-term__done" data-term-out data-term-done><span class="ui-term__ok"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 8.3 2.4 2.4 4.6-5"/></svg></span><b>Done</b><span class="ui-term__dim">in 2.10s</span></div>
+                <div class="ui-term__ln ui-term__cmd" data-term-next><span class="ui-term__cwd">~/<span class="ui-term__up">billing-api/</span></span><span class="ui-term__sig">$</span><span class="ui-term__typed"></span><i class="ui-term__caret" aria-hidden="true"></i></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROJECTS: split-text-left. The galaxy is the app's model drawn: a project is a sun, its agents are planets -->
+  <section class="section" id="project" aria-labelledby="project-h">
+    <div class="wrap">
+      <div class="grid">
+        <div class="span-6 stack-5">
+          <h2 id="project-h">Projects are git repositories</h2>
+          <p class="t-lead">Add a folder that is a git repository. Its agents, its terminal and its diffs all work inside that folder, and each project keeps its own icon.</p>
+          <ul class="rows">
+            <li><span class="rows__name">Agents</span><span class="rows__value">Claude Code and Codex</span></li>
+            <li><span class="rows__name">Diffs</span><span class="rows__value">Read from git</span></li>
+            <li><span class="rows__name">Saved</span><span class="rows__value">One JSON file on your computer</span></li>
+          </ul>
+          <p><a class="link" href="#app">See the agents</a></p>
+        </div>
+        <div class="span-6 start-7">
+          <div class="galaxy" role="img" aria-label="Three projects drawn as suns, each with its agents as coloured planets on orbits">
+            <svg viewBox="0 0 500 400" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><radialGradient id="glow"><stop offset="0" stop-color="#f4f4f5" stop-opacity=".22"/><stop offset="1" stop-color="#f4f4f5" stop-opacity="0"/></radialGradient></defs><circle cx="0.0" cy="368.3" r="0.66" fill="#f4f4f5" opacity="0.24"/><circle cx="364.7" cy="213.1" r="0.70" fill="#f4f4f5" opacity="0.49"/><circle cx="377.5" cy="217.1" r="1.02" fill="#f4f4f5" opacity="0.44"/><circle cx="408.4" cy="96.8" r="0.74" fill="#f4f4f5" opacity="0.47"/><circle cx="349.0" cy="21.6" r="1.02" fill="#f4f4f5" opacity="0.36"/><circle cx="461.2" cy="323.0" r="0.51" fill="#f4f4f5" opacity="0.38"/><circle cx="461.6" cy="275.4" r="0.98" fill="#f4f4f5" opacity="0.41"/><circle cx="456.0" cy="363.3" r="0.74" fill="#f4f4f5" opacity="0.30"/><circle cx="418.6" cy="132.9" r="0.54" fill="#f4f4f5" opacity="0.28"/><circle cx="214.2" cy="117.9" r="1.24" fill="#f4f4f5" opacity="0.40"/><circle cx="364.6" cy="351.1" r="0.45" fill="#f4f4f5" opacity="0.27"/><circle cx="280.3" cy="203.5" r="0.78" fill="#f4f4f5" opacity="0.24"/><circle cx="454.5" cy="22.0" r="0.73" fill="#f4f4f5" opacity="0.30"/><circle cx="332.2" cy="369.7" r="0.86" fill="#f4f4f5" opacity="0.22"/><circle cx="202.8" cy="113.4" r="0.73" fill="#f4f4f5" opacity="0.34"/><circle cx="166.3" cy="212.7" r="0.95" fill="#f4f4f5" opacity="0.25"/><circle cx="453.2" cy="183.1" r="1.18" fill="#f4f4f5" opacity="0.44"/><circle cx="317.2" cy="206.5" r="0.85" fill="#f4f4f5" opacity="0.46"/><circle cx="469.8" cy="158.7" r="1.04" fill="#f4f4f5" opacity="0.26"/><circle cx="293.4" cy="140.2" r="0.70" fill="#f4f4f5" opacity="0.33"/><circle cx="397.4" cy="351.0" r="0.50" fill="#f4f4f5" opacity="0.52"/><circle cx="38.9" cy="162.7" r="0.54" fill="#f4f4f5" opacity="0.19"/><circle cx="498.1" cy="88.0" r="0.97" fill="#f4f4f5" opacity="0.21"/><circle cx="228.6" cy="237.2" r="0.52" fill="#f4f4f5" opacity="0.56"/><circle cx="442.3" cy="356.2" r="1.20" fill="#f4f4f5" opacity="0.56"/><circle cx="380.6" cy="110.2" r="0.41" fill="#f4f4f5" opacity="0.26"/><circle cx="38.0" cy="0.6" r="0.96" fill="#f4f4f5" opacity="0.25"/><circle cx="370.6" cy="195.7" r="1.02" fill="#f4f4f5" opacity="0.26"/><circle cx="441.0" cy="94.1" r="0.74" fill="#f4f4f5" opacity="0.55"/><circle cx="59.2" cy="195.7" r="0.40" fill="#f4f4f5" opacity="0.56"/><circle cx="318.5" cy="368.8" r="0.42" fill="#f4f4f5" opacity="0.56"/><circle cx="94.1" cy="387.5" r="0.91" fill="#f4f4f5" opacity="0.46"/><circle cx="133.1" cy="89.1" r="0.59" fill="#f4f4f5" opacity="0.40"/><circle cx="26.2" cy="307.8" r="1.03" fill="#f4f4f5" opacity="0.47"/><circle cx="249.1" cy="13.1" r="0.50" fill="#f4f4f5" opacity="0.56"/><circle cx="65.4" cy="275.1" r="1.20" fill="#f4f4f5" opacity="0.17"/><circle cx="441.6" cy="344.5" r="1.29" fill="#f4f4f5" opacity="0.58"/><circle cx="382.4" cy="167.8" r="0.62" fill="#f4f4f5" opacity="0.48"/><circle cx="441.1" cy="159.3" r="0.61" fill="#f4f4f5" opacity="0.33"/><circle cx="443.5" cy="223.5" r="0.72" fill="#f4f4f5" opacity="0.43"/><circle cx="367.4" cy="134.0" r="1.05" fill="#f4f4f5" opacity="0.34"/><circle cx="99.3" cy="124.7" r="1.29" fill="#f4f4f5" opacity="0.60"/><circle cx="316.2" cy="348.9" r="1.23" fill="#f4f4f5" opacity="0.24"/><circle cx="322.6" cy="54.2" r="0.85" fill="#f4f4f5" opacity="0.40"/><circle cx="385.7" cy="378.3" r="0.83" fill="#f4f4f5" opacity="0.23"/><circle cx="223.3" cy="66.4" r="1.00" fill="#f4f4f5" opacity="0.38"/><circle cx="280.8" cy="202.7" r="1.08" fill="#f4f4f5" opacity="0.31"/><circle cx="375.4" cy="10.4" r="0.67" fill="#f4f4f5" opacity="0.39"/><circle cx="101.4" cy="289.2" r="0.66" fill="#f4f4f5" opacity="0.26"/><circle cx="329.8" cy="171.7" r="0.47" fill="#f4f4f5" opacity="0.50"/><circle cx="411.4" cy="366.2" r="1.22" fill="#f4f4f5" opacity="0.46"/><circle cx="479.4" cy="10.1" r="1.09" fill="#f4f4f5" opacity="0.42"/><circle cx="362.0" cy="359.3" r="0.43" fill="#f4f4f5" opacity="0.21"/><circle cx="40.1" cy="43.3" r="0.48" fill="#f4f4f5" opacity="0.15"/><circle cx="302.5" cy="378.3" r="0.57" fill="#f4f4f5" opacity="0.21"/><circle cx="101.1" cy="270.0" r="0.62" fill="#f4f4f5" opacity="0.36"/><circle cx="497.0" cy="169.0" r="1.01" fill="#f4f4f5" opacity="0.50"/><circle cx="198.4" cy="166.6" r="0.46" fill="#f4f4f5" opacity="0.25"/><circle cx="403.8" cy="389.7" r="0.54" fill="#f4f4f5" opacity="0.57"/><circle cx="254.4" cy="48.9" r="0.59" fill="#f4f4f5" opacity="0.42"/><circle cx="85.3" cy="31.2" r="0.65" fill="#f4f4f5" opacity="0.44"/><circle cx="278.1" cy="192.3" r="1.29" fill="#f4f4f5" opacity="0.18"/><circle cx="206.7" cy="125.8" r="0.40" fill="#f4f4f5" opacity="0.15"/><circle cx="206.7" cy="36.5" r="0.61" fill="#f4f4f5" opacity="0.57"/><circle cx="388.7" cy="305.6" r="0.79" fill="#f4f4f5" opacity="0.53"/><circle cx="481.2" cy="320.4" r="1.00" fill="#f4f4f5" opacity="0.41"/><circle cx="174.0" cy="162.8" r="0.85" fill="#f4f4f5" opacity="0.37"/><circle cx="283.7" cy="288.7" r="1.00" fill="#f4f4f5" opacity="0.43"/><circle cx="364.5" cy="353.8" r="1.16" fill="#f4f4f5" opacity="0.59"/><circle cx="219.0" cy="194.8" r="1.26" fill="#f4f4f5" opacity="0.59"/><circle cx="130" cy="130" r="46" fill="url(#glow)"/><circle cx="360" cy="120" r="46" fill="url(#glow)"/><circle cx="250" cy="290" r="46" fill="url(#glow)"/><circle cx="130" cy="130" r="50" fill="none" stroke="#f4f4f5" stroke-opacity=".12" stroke-dasharray="2 4"/><circle cx="130" cy="130" r="85" fill="none" stroke="#f4f4f5" stroke-opacity=".12" stroke-dasharray="2 4"/><circle cx="360" cy="120" r="50" fill="none" stroke="#f4f4f5" stroke-opacity=".12" stroke-dasharray="2 4"/><circle cx="360" cy="120" r="85" fill="none" stroke="#f4f4f5" stroke-opacity=".12" stroke-dasharray="2 4"/><circle cx="250" cy="290" r="50" fill="none" stroke="#f4f4f5" stroke-opacity=".12" stroke-dasharray="2 4"/><circle cx="250" cy="290" r="85" fill="none" stroke="#f4f4f5" stroke-opacity=".12" stroke-dasharray="2 4"/><circle cx="173.3" cy="155.0" r="4.5" fill="#60a5fa"/><circle cx="86.7" cy="105.0" r="4.5" fill="#4ade80"/><circle cx="87.5" cy="203.6" r="4.5" fill="#fde047"/><circle cx="130" cy="130" r="10" fill="#f4f4f5"/><circle cx="385.0" cy="163.3" r="4.5" fill="#2dd4bf"/><circle cx="335.0" cy="76.7" r="4.5" fill="#e4e4e7"/><circle cx="402.5" cy="46.4" r="4.5" fill="#f87171"/><circle cx="286.4" cy="162.5" r="4.5" fill="#4ade80"/><circle cx="360" cy="120" r="10" fill="#f4f4f5"/><circle cx="300.0" cy="290.0" r="4.5" fill="#60a5fa"/><circle cx="200.0" cy="290.0" r="4.5" fill="#fde047"/><circle cx="250.0" cy="375.0" r="4.5" fill="#8a8a93"/><circle cx="250.0" cy="205.0" r="4.5" fill="#4ade80"/><circle cx="250" cy="290" r="10" fill="#f4f4f5"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEPS: three real steps as ruled rows (a calm section after two visuals) -->
+  <section class="section steps" id="start" aria-labelledby="start-h">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="start-h">Start in four steps. <span class="muted">Build it from this repository with wails build, then:</span></h2>
+      </div>
+      <ul class="steps-list">
+        <li><span class="steps-list__icon" aria-hidden="true"><img class="ic-ink" src="assets/icons/ui-folder-git.svg" alt=""></span><span class="steps-list__name">Add a repository</span><p>Pick the folder of any git repository. Orbit makes it a project.</p><span class="steps-list__num">01</span></li>
+        <li><span class="steps-list__icon" aria-hidden="true"><img src="assets/icons/claude.svg" alt=""><img src="assets/icons/codex.svg" alt=""></span><span class="steps-list__name">Launch an agent</span><p>Choose Claude Code or Codex, then write the task it should do.</p><span class="steps-list__num">02</span></li>
+        <li><span class="steps-list__icon" aria-hidden="true"><img class="ic-ink" src="assets/icons/ui-git-compare.svg" alt=""></span><span class="steps-list__name">Review the changes</span><p>Read each file's diff and the conflicts list before you keep the work.</p><span class="steps-list__num">03</span></li>
+        <li><span class="steps-list__icon" aria-hidden="true"><img class="ic-ink" src="assets/icons/ui-refresh-cw.svg" alt=""></span><span class="steps-list__name">Stop or resume an agent</span><p>Stop an agent from its row, or resume it later to continue its session.</p><span class="steps-list__num">04</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- HUB: hub-tools diagram card, built with the kit's diagram.js. Four real tools, no invented spokes -->
+  <section class="section" id="agents" aria-labelledby="agents-h">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="agents-h">Works with the agents you already run <span class="muted">Orbit starts the tools you have installed.</span></h2>
+      </div>
+      <div class="panel">
+        <div class="dg" data-diagram='{"types":["software"],"layout":"hub","alt":"Orbit connects Claude Code, Codex, Git and the terminal.","center":{"label":"Orbit","icon":"ui:bot"},"spokes":[{"label":"Claude Code","icon":"claude"},{"label":"Codex","icon":"codex"},{"label":"Git","icon":"git"},{"label":"Terminal","icon":"ui:terminal"}]}'></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ: split pair, every answer open -->
+  <section class="section" id="faq" aria-labelledby="faq-h">
+    <div class="wrap">
+      <div class="grid">
+        <div class="span-6">
+          <img class="faq-icon" src="assets/icons/orbit.png" alt="" width="64" height="64">
+          <h2 id="faq-h">Questions</h2>
+          <p class="t-lead">Plain answers, from how the app works today.</p>
+        </div>
+        <div class="span-6 start-7 faq">
+          <div class="faq__item"><h3>Do I need an API key?</h3><p>No. Orbit starts the Claude Code and Codex command-line tools you already have, and they use their own sign-in.</p></div>
+          <div class="faq__item"><h3>Where are projects saved?</h3><p>In one JSON file on your computer. Changes are saved about a second after they are made.</p></div>
+          <div class="faq__item"><h3>Can two agents change the same file?</h3><p>They can. Orbit lists each file that two or more agents wrote in the same project.</p></div>
+          <div class="faq__item"><h3>How do I stop an agent?</h3><p>Choose Stop on the agent. It shows as stopped and keeps its history, so you can resume it later.</p></div>
+          <div class="faq__item"><h3>Which models can agents use?</h3><p>The models each command-line tool reports. Orbit lists them when you launch an agent.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- FOOTER.CLOSING: close and footer in one last screen. Row 1 the close (close-type), row 2 the links and the legal row. -->
+<footer class="footer closing" id="contact" aria-labelledby="close-h">
+  <div class="wrap">
+    <div class="closing__cta close--type">
+      <div class="section-head">
+        <h2 id="close-h">Add a repository and run your first agent</h2>
+        <p>Orbit runs on your computer with the tools you already have.</p>
+      </div>
+      <a class="btn btn--primary btn--xl btn--wide" href="#start">Run your first agent<svg class="m-arrow" viewBox="0 0 12 12" aria-hidden="true"><path class="m-arrow__stem" d="M1 6h8"/><path class="m-arrow__head" d="M4.5 2.5 8 6l-3.5 3.5"/></svg></a>
+    </div>
+    <div class="closing__links">
+      <div class="grid">
+        <div class="span-6 stack-4">
+          <a class="nav__logo" href="#top"><span class="mark" data-mark="ring" aria-hidden="true"></span>Orbit</a>
+          <p class="footer__lede">A desktop app for running coding agents in your projects.</p>
+        </div>
+        <div class="span-3 start-7 footer__col"><h4>App</h4><ul><li><a href="#project">Projects</a></li><li><a href="#app">Agents</a></li></ul></div>
+        <div class="span-3 footer__col"><h4>Start</h4><ul><li><a href="#start">Run your first agent</a></li><li><a href="#faq">Questions</a></li></ul></div>
+      </div>
+      <div class="footer__legal">
+        <span>&copy; 2026 Orbit</span>
+        <span>Product names and logos are trademarks of their owners</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!-- nav, tabs, highlights, fragments and the phone sheet: system.js; hovers, presses and card loops: motion.js;
+     diagrams: diagram.js via mount.js -->
+<script type="module" src="assets/system.js"></script>
+<script type="module" src="assets/motion/motion.js"></script>
+<script type="module" src="assets/layout/layout.js"></script>
+<script type="module" src="assets/diagrams/mount.js"></script>
+</body>
+</html>

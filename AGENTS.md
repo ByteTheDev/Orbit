@@ -23,7 +23,7 @@ Orbit is a Wails v2 desktop app: a Go backend plus a React/TypeScript frontend. 
 | `frontend/src/lib/store.ts` | External store with selector subscriptions (`useSyncExternalStore`). Components read slices from here. Events from Go are applied here. |
 | `frontend/src/lib/bridge.ts` | The only place that calls Go bindings. Errors when not running inside Wails. |
 | `frontend/src/lib/actions.ts` | User actions. Each calls the backend, reports failures as toasts. |
-| `frontend/src/lib/shortcuts.ts` | Keyboard map (shown in the shortcuts dialog). |
+| `frontend/src/lib/shortcuts.ts` | Keyboard map (shown in Settings › Keyboard). |
 | `frontend/src/lib/theme.ts`, `index.css` | Colours. `index.css`'s `@theme` block is the source of truth. |
 | `frontend/src/lib/projectIdentity.ts` | Project accent colour and symbol, derived from the id. |
 | `frontend/src/lib/universe/` | Galaxy view, pure where possible: `layout.ts` (positions), `camera.ts` (zoom/pan math), `render.ts` (canvas drawing and hit-testing), `galaxyGL.ts` (WebGL nebula and stars), `galaxyShape.ts`, `galaxyArt.ts`. |

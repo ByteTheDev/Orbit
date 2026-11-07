@@ -96,6 +96,7 @@
   --animate-toast-in: toast-in 300ms var(--ease-out-expo) both;
   --animate-toast-out: toast-out 180ms var(--ease-in-standard) forwards;
   --animate-pop: pop 260ms var(--ease-spring) both;
+  --animate-hint-nudge: hint-nudge 7s var(--ease-in-standard) infinite;
 }
 
 @keyframes fade-in {
@@ -217,6 +218,41 @@
   }
 }
 
+/* Thinking-effort trigger tones. Both use the same drifting gradient border; only the colours differ.
+ * Ultra (Codex) is purple. Claude's max is rainbow. */
+.effort-rainbow,
+.effort-ultra {
+  border-color: transparent;
+  background-image:
+    linear-gradient(var(--color-surface), var(--color-surface)),
+    linear-gradient(90deg, var(--effort-stops));
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
+  background-size: 100% 100%, 200% 100%;
+  background-repeat: no-repeat, repeat;
+  background-position: 0% 0%, 0% 0%;
+  animation: rainbow-border 4s linear infinite;
+}
+
+.effort-rainbow {
+  --effort-stops: #f87171, #fbbf24, #4ade80, #60a5fa, #a78bfa, #f472b6, #f87171, #fbbf24, #4ade80, #60a5fa, #a78bfa, #f472b6, #f87171;
+}
+
+.effort-ultra {
+  --effort-stops: #581c87, #7e22ce, #a855f7, #c084fc, #e9d5ff, #a78bfa, #581c87, #7e22ce, #a855f7, #c084fc, #e9d5ff, #a78bfa, #581c87;
+  color: #d8b4fe;
+}
+
+/* One gradient cycle spans half the 200% tile, so moving by half the tile loops without a seam. */
+@keyframes rainbow-border {
+  from {
+    background-position: 0% 0%, 0% 0%;
+  }
+  to {
+    background-position: 0% 0%, 100% 0%;
+  }
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;
@@ -225,6 +261,21 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* A rare, small nudge: the play icon slides forward once every few seconds, then rests. */
+@keyframes hint-nudge {
+  0%,
+  86%,
+  100% {
+    transform: translateX(0);
+  }
+  90% {
+    transform: translateX(2px);
+  }
+  94% {
+    transform: translateX(0);
   }
 }
 

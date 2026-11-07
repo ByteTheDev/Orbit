@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { openDialog, setSettings, useStore } from '../../lib/store'
+import { setSettings, useStore } from '../../lib/store'
 import {
   ACCENTS,
   DEFAULT_SETTINGS,
@@ -15,7 +15,7 @@ import { SHORTCUTS } from '../../lib/shortcuts'
 import { APP_VERSION, releaseSummary, type ReleaseInfo } from '../../lib/release'
 import { Button, Dialog, Kbd } from '../ui'
 
-type SectionId = 'appearance' | 'chat' | 'notifications' | 'keyboard' | 'release' | 'reset'
+export type SectionId = 'appearance' | 'chat' | 'notifications' | 'keyboard' | 'release' | 'reset'
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
@@ -26,9 +26,9 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'reset', label: 'Reset' },
 ]
 
-/** Settings page, opened from the top bar or with `,`. Every control writes through setSettings at once. */
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
-  const [section, setSection] = useState<SectionId>('appearance')
+/** Settings page, opened from the top bar, with `,`, or with `?` (which opens the Keyboard section). Every control writes through setSettings at once. */
+export function SettingsDialog({ onClose, section: initialSection = 'appearance' }: { onClose: () => void; section?: SectionId }) {
+  const [section, setSection] = useState<SectionId>(initialSection)
   return (
     <Dialog
       title="Settings"
@@ -206,15 +206,9 @@ function KeyboardSection() {
         onChange={(singleKeyShortcuts) => setSettings({ singleKeyShortcuts })}
       />
 
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-body font-medium text-ink">Shortcut list</span>
-          <Button variant="secondary" size="sm" onClick={() => openDialog({ kind: 'shortcuts' })}>
-            Open full list
-          </Button>
-        </div>
+      <Group title="Shortcut list" hint="Every keyboard shortcut in Orbit.">
         <ul className="divide-y divide-line rounded-lg border border-line">
-          {SHORTCUTS.slice(0, 8).map((s) => (
+          {SHORTCUTS.map((s) => (
             <li key={s.keys} className="flex items-center justify-between gap-4 px-3 py-2 text-body">
               <span className="text-ink/85">{s.action}</span>
               <span className="flex shrink-0 items-center gap-1">
@@ -225,7 +219,7 @@ function KeyboardSection() {
             </li>
           ))}
         </ul>
-      </div>
+      </Group>
     </div>
   )
 }

@@ -41,7 +41,7 @@ const FRAME_MS = 33
 /** The nebula drifts slowly, so it is shaded about 11 times a second rather than every frame. */
 const NEBULA_MS = 90
 /** Nebula shading resolution, relative to the canvas's device pixels. */
-const NEBULA_SCALE = 0.5
+const NEBULA_SCALE = 1.0
 
 interface StarLayer {
   count: number
@@ -101,7 +101,8 @@ void main() {
   vec2 px = gl_FragCoord.xy;
   vec2 uv = px / uRes;
   vec2 q = px - uRes * 0.5 + uOff;
-  float s = 1.0 / (uRes.y * 0.9) * uScale;
+  // 0.85 enlarges the cloud features by about 18% (1 / 0.85) without changing the drift speed.
+  float s = 1.0 / (uRes.y * 0.9) * uScale * 0.85;
 
   // Far cloud: large, slow, domain-warped so it reads as gas rather than noise.
   vec2 p1 = q * s * 1.5;

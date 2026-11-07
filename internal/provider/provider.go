@@ -42,23 +42,23 @@ type Image struct {
 type UpdateKind int
 
 const (
-	UpdSession      UpdateKind = iota + 1 // ID = provider session id, Text = model name
-	UpdStatus                             // Status + Detail
-	UpdMessageStart                       // ID, Role, Text: a streamed message begins
-	UpdMessageDelta                       // ID, Text: streamed text
-	UpdMessageEnd                         // ID: streamed message finished
-	UpdMessage                            // ID, Role, Text: complete message
-	UpdToolStart                          // Tool
-	UpdToolEnd                            // ToolID, Output, Failed
-	UpdFile                               // File: a file was read or written
-	UpdUsage                              // Input/Output/CacheRead tokens for a finished turn
-	UpdCost                               // Cost in USD for a finished turn
-	UpdIssue                              // Level (error|warning), Text
-	UpdActivity                           // Text: a plain activity line
-	UpdTurnDone                           // Success, Text: the turn finished
-	UpdSubAgentStart                      // ID = the Task call id, Text = task description, Detail = sub-agent type
-	UpdSubAgentActivity                   // ID = the Task call id, Detail = the sub-agent's latest action
-	UpdSubAgentEnd                        // ID = the Task call id, Failed
+	UpdSession          UpdateKind = iota + 1 // ID = provider session id, Text = model name
+	UpdStatus                                 // Status + Detail
+	UpdMessageStart                           // ID, Role, Text: a streamed message begins
+	UpdMessageDelta                           // ID, Text: streamed text
+	UpdMessageEnd                             // ID: streamed message finished
+	UpdMessage                                // ID, Role, Text: complete message
+	UpdToolStart                              // Tool
+	UpdToolEnd                                // ToolID, Output, Failed
+	UpdFile                                   // File: a file was read or written
+	UpdUsage                                  // Input/Output/CacheRead tokens for a finished turn
+	UpdCost                                   // Cost in USD for a finished turn
+	UpdIssue                                  // Level (error|warning), Text
+	UpdActivity                               // Text: a plain activity line
+	UpdTurnDone                               // Success, Text: the turn finished
+	UpdSubAgentStart                          // ID = the Task call id, Text = task description, Detail = sub-agent type
+	UpdSubAgentActivity                       // ID = the Task call id, Detail = the sub-agent's latest action
+	UpdSubAgentEnd                            // ID = the Task call id, Failed
 )
 
 // FileTouch describes a read or write. Phase is "start" when the tool begins
@@ -123,7 +123,7 @@ type Info struct {
 
 // Registry returns all known providers keyed by id.
 func Registry() map[string]Provider {
-	list := []Provider{Claude{}, Codex{}}
+	list := []Provider{Claude{}, Codex{}, OMP{}, OpenCode{}}
 	out := make(map[string]Provider, len(list))
 	for _, p := range list {
 		out[p.ID()] = p
@@ -133,7 +133,7 @@ func Registry() map[string]Provider {
 
 // Infos describes every registered provider, in display order.
 func Infos() []Info {
-	order := []Provider{Claude{}, Codex{}}
+	order := []Provider{Claude{}, Codex{}, OMP{}, OpenCode{}}
 	out := make([]Info, 0, len(order))
 	for _, p := range order {
 		d := p.Detect()

@@ -31,8 +31,7 @@ export type Dialog =
   | { kind: 'project' }
   | { kind: 'launch'; projectId?: string }
   | { kind: 'file'; agentId: string; path: string }
-  | { kind: 'shortcuts' }
-  | { kind: 'settings' }
+  | { kind: 'settings'; section?: 'keyboard' }
   | { kind: 'remove'; agentId: string }
   | { kind: 'deleteProject'; projectId: string }
   | { kind: 'projectIcon'; projectId: string }

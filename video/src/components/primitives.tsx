@@ -49,8 +49,7 @@ export const Spark: React.FC<{ size?: number; delay?: number }> = ({ size = 160,
   const rot = interpolate(containerP, [0, 1], [-120, 0], { easing: theme.ease.out });
   return (
     <div style={{ width: size, height: size, position: "relative",
-      transform: `scale(${containerP}) rotate(${rot}deg)`,
-      filter: `drop-shadow(0 0 ${size * 0.25}px ${theme.colors.glow})` }}>
+      transform: `scale(${containerP}) rotate(${rot}deg)` }}>
       {Array.from({ length: rays }).map((_, i) => {
         const p = spring({ frame: frame - delay - i * 1.2, fps, config: theme.spring.snappy });
         return <div key={i} style={{ position: "absolute", left: "50%", top: "50%",

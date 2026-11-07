@@ -7,10 +7,9 @@ import { SettingsDialog } from '../settings/SettingsDialog'
 import { BrowserDialog } from '../browser/BrowserDialog'
 import { baseName, projectMark, timeAgo } from '../../lib/format'
 import { identityFor } from '../../lib/projectIdentity'
-import { SHORTCUTS } from '../../lib/shortcuts'
 import { STATUS_COLOR } from '../../lib/theme'
 import type { FileDiffResult } from '../../types'
-import { Button, Dialog, Field, IconAlert, IconCheck, IconChevronDown, IconCpu, IconEye, IconFolder, IconPencil, IconPlay, IconPlus, IconShield, IconText, IconUnlock, Input, Kbd, ModelPicker, ProviderMark, Select, Spinner, Textarea } from '../ui'
+import { Button, Dialog, Field, IconAlert, IconCheck, IconChevronDown, IconCpu, IconEye, IconFolder, IconPencil, IconPlay, IconPlus, IconShield, IconText, IconUnlock, Input, ModelPicker, ProviderMark, Select, Spinner, Textarea } from '../ui'
 
 function IconBolt() {
   return (
@@ -63,10 +62,8 @@ function renderDialog(dialog: NonNullable<DialogState>, close: () => void): Reac
       return <LaunchDialog presetProjectId={dialog.projectId} onClose={close} />
     case 'file':
       return <FileDialog agentId={dialog.agentId} path={dialog.path} onClose={close} />
-    case 'shortcuts':
-      return <ShortcutsDialog onClose={close} />
     case 'settings':
-      return <SettingsDialog onClose={close} />
+      return <SettingsDialog section={dialog.section} onClose={close} />
     case 'remove':
       return <ConfirmRemoveAgent agentId={dialog.agentId} onClose={close} />
     case 'deleteProject':
@@ -197,6 +194,8 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
   const selectedModel = models.find((m) => m.id === model)
   const effortLevels = selectedModel?.effort ?? []
   const effortOn = effortLevels.includes(effort) ? effort : ''
+  // Both get the drifting border: Ultra (Codex-only) in purple, Claude's max in rainbow.
+  const effortTone = effortOn === 'ultra' ? 'effort-ultra' : effortOn === 'max' && providerId === 'claude' ? 'effort-rainbow' : ''
   // Thinking and fast mode are rarely changed, so they sit behind one disclosure. Set values stay visible in its summary.
   const hasAdvanced = effortLevels.length > 0 || fastOffered
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -354,6 +353,15 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
               hint={models.find((m) => m.id === model)?.description ?? (models.length ? 'Empty uses the provider default.' : `${provider?.name ?? 'The provider'} picks its own model.`)}
               icon={<IconCpu size={13} />}
             >
+              {models.length === 0 ? (
+              <Input
+                id="launch-model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="Provider default"
+                aria-label="Model"
+              />
+            ) : (
               <ModelPicker
                 id="launch-model"
                 value={model}
@@ -364,9 +372,10 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
                 models={models}
                 provider={provider?.id ?? ''}
                 defaultLabel="Provider default"
-                disabled={models.length === 0}
+                disabled={false}
                 aria-label="Model"
               />
+            )}
             </Field>
             <Field label="Permissions" htmlFor="launch-mode" hint={modes.find((m) => m.id === mode)?.description} icon={<IconShield size={13} />}>
               <div id="launch-mode" role="radiogroup" aria-label="Permissions" className="grid grid-cols-2 gap-1.5">
@@ -416,7 +425,7 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
               hint={`How hard the model thinks before it answers. ${selectedModel?.defaultEffort ? `Default is ${effortName(selectedModel.defaultEffort).toLowerCase()}.` : 'Default is the CLI setting.'}`}
               icon={<IconBrain size={13} />}
             >
-              <Select id="launch-effort" value={effortOn} onChange={(e) => setEffort(e.target.value)}>
+              <Select id="launch-effort" value={effortOn} onChange={(e) => setEffort(e.target.value)} className={effortTone}>
                 <option value="">{selectedModel?.defaultEffort ? `Default (${effortName(selectedModel.defaultEffort).toLowerCase()})` : 'Default'}</option>
                 {effortLevels.map((level) => (
                   <option key={level} value={level}>
@@ -596,27 +605,6 @@ export function DiffView({ text }: { text: string }) {
         </div>
       </div>
     </div>
-  )
-}
-
-// ---- shortcuts ---------------------------------------------------------------------------
-
-function ShortcutsDialog({ onClose }: { onClose: () => void }) {
-  return (
-    <Dialog title="Keyboard shortcuts" onClose={onClose} width="max-w-md">
-      <ul className="divide-y divide-line">
-        {SHORTCUTS.map((s) => (
-          <li key={s.keys} className="flex items-center justify-between gap-4 py-2.5 text-body">
-            <span className="text-ink/85">{s.action}</span>
-            <span className="flex shrink-0 items-center gap-1">
-              {s.keys.split(' ').filter((k) => k !== '+' && k !== '/' && k !== '–').map((k, i) => (
-                <Kbd key={`${k}-${i}`}>{k}</Kbd>
-              ))}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </Dialog>
   )
 }
 

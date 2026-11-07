@@ -141,7 +141,7 @@ export default function App() {
         case 'P':
           return handled(() => openDialog({ kind: 'project' }))
         case '?':
-          return handled(() => openDialog({ kind: 'shortcuts' }))
+          return handled(() => openDialog({ kind: 'settings', section: 'keyboard' }))
         case ',':
           return handled(() => openDialog({ kind: 'settings' }))
         case '[':
@@ -351,7 +351,9 @@ export default function App() {
                   <p className="mt-0.5 text-[12px] text-muted">Launch one to see it orbit here.</p>
                 </div>
                 <Button variant="primary" size="sm" onClick={() => openDialog({ kind: 'launch', projectId: activeProjectId ?? undefined })} className="rounded-full px-3.5">
-                  <IconPlay size={11} />
+                  <span className="inline-flex animate-hint-nudge">
+                    <IconPlay size={11} />
+                  </span>
                   Launch agent <Kbd>N</Kbd>
                 </Button>
               </div>

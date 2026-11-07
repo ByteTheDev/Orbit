@@ -17,3 +17,17 @@ to this in your browser, and you can call your Go code from devtools.
 ## Building
 
 To build a redistributable, production mode package, use `wails build`.
+
+## macOS and Linux
+
+Build on the target OS with Go, Node.js, npm, Git, and the Wails v2 CLI installed.
+Follow the [Wails platform prerequisites](https://wails.io/docs/gettingstarted/installation/),
+including Xcode command line tools on macOS or the GTK and WebKit development
+packages on Linux. Run `wails dev` for development or `wails build` for a
+production build. Install and sign in to the agent CLIs separately, and make
+sure they are on the PATH available to Orbit when launched.
+
+The terminal uses `$SHELL`, falling back to `/bin/sh`. The embedded native
+browser view currently requires Windows; macOS and Linux use the browser's
+text view. macOS and Linux desktop builds and runtime behavior still need
+verification on those platforms.

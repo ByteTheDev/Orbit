@@ -1,5 +1,5 @@
 import { useStore, openDialog, setState } from '../lib/store'
-import { Button, IconGlobe, IconGrid, IconKeyboard, IconPlus, IconSettings, IconSidebar, Kbd } from './ui'
+import { Button, IconGlobe, IconGrid, IconPlus, IconSettings, IconSidebar, Kbd } from './ui'
 import { Tooltip } from './navigation/Tooltip'
 
 /** Top bar: brand, a live summary, and the global actions. Labels fold into icons on narrow windows. */
@@ -76,12 +76,6 @@ export function TopBar() {
           <Button variant="ghost" size="sm" onClick={() => openDialog({ kind: 'settings' })} aria-label="Settings" className="text-muted">
             <IconSettings size={14} />
             <span className="max-[1000px]:sr-only">Settings</span>
-          </Button>
-        </Tooltip>
-        <Tooltip label="Keyboard shortcuts" shortcut="?" align="end">
-          <Button variant="ghost" size="sm" onClick={() => openDialog({ kind: 'shortcuts' })} aria-label="Keyboard shortcuts" className="text-muted">
-            <IconKeyboard size={14} />
-            <span className="max-[1000px]:sr-only">Shortcuts</span>
           </Button>
         </Tooltip>
         <Tooltip label={hasProjects ? 'New agent' : 'Create a project first'} shortcut={hasProjects ? 'N' : undefined} align="end">
