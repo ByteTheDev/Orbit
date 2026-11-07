@@ -21,6 +21,10 @@ type State struct {
 	Version  int                 `json:"version"`
 	Projects []model.Project     `json:"projects"`
 	Agents   []model.AgentRecord `json:"agents"`
+	// Automations are optional: a state file from before they existed loads with none.
+	Automations []model.Automation `json:"automations,omitempty"`
+	// SSHProfiles are optional: a state file from before they existed loads with none.
+	SSHProfiles []model.SSHProfile `json:"sshProfiles,omitempty"`
 }
 
 // DefaultPath returns <UserConfigDir>/Orbit/state.json.

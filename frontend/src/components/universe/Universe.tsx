@@ -4,7 +4,7 @@ import { ACTIVE_STATUSES } from '../../types'
 import { STATUS_COLOR } from '../../lib/theme'
 import { fitPoints, screenToWorld, tweenAt, zoomAt, clampZoom, type Camera, type Tween } from '../../lib/universe/camera'
 import { computeLayout, displayOrbit, planetPosition, systemBounds, worldToStored, type Layout } from '../../lib/universe/layout'
-import { PULSE_MS, drawUniverse, hitTest, makeBackdrop, planetScreen, type Hit, type Pulse, type ViewState } from '../../lib/universe/render'
+import { PULSE_MS, drawUniverse, hitTest, makeBackdrop, onLogoLoaded, planetScreen, type Hit, type Pulse, type ViewState } from '../../lib/universe/render'
 import { setIconListener } from '../../lib/icons'
 import { createGalaxy, type Galaxy } from '../../lib/universe/galaxyGL'
 import { buildGalaxyField, type GalaxyField } from '../../lib/universe/galaxyShape'
@@ -34,12 +34,25 @@ export interface UniverseProps {
   agents: AgentSummary[]
   selectedId: string | null
   reducedMotion: boolean
+  /**
+   * The active theme is light. The WebGL sky is dark space, so a light theme draws the 2D backdrop instead.
+   * Read on mount only: the parent keys this component by theme, so a theme change remounts it.
+   */
+  lightTheme?: boolean
   onSelectAgent: (id: string | null) => void
   onSelectProject: (projectId: string) => void
+  /** A double-click on a planet asks for that agent's conversation in focus mode. */
+  onEnterFocus: (agentId: string) => void
   onOpenMenu: (agentId: string, x: number, y: number) => void
   onOpenProjectMenu: (projectId: string, x: number, y: number) => void
   onMovePlanet: (agentId: string, x: number, y: number) => void
 }
+
+/**
+ * What the camera last framed. When the canvas changes size (the chat panel is resized or
+ * focus mode hides the galaxy), the camera re-frames the same target, so planets are not cut off.
+ */
+type Anchor = { kind: 'galaxy' } | { kind: 'agent' | 'project' | 'system'; id: string }
 
 interface DragState {
   pointerId: number
@@ -85,6 +98,8 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
   const dragRef = useRef<DragState | null>(null)
   const hoverIdRef = useRef<string | null>(null)
   const lastSunClickRef = useRef<{ id: string; at: number } | null>(null)
+  const lastPlanetClickRef = useRef<{ id: string; at: number } | null>(null)
+  const anchorRef = useRef<Anchor>({ kind: 'galaxy' })
   const fieldRef = useRef<GalaxyField | null>(null)
   const fieldKeyRef = useRef<string | null>(null)
   /** The solar system the camera is framing, or null while showing the whole galaxy. */
@@ -245,16 +260,21 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
     requestDraw()
   }, [selectedId, requestDraw])
 
-  // Redraw when an uploaded project icon finishes loading.
+  // Redraw when an uploaded project icon or a provider's brand image finishes loading.
   useEffect(() => {
     setIconListener(requestDraw)
-    return () => setIconListener(null)
+    const unsubscribeLogos = onLogoLoaded(requestDraw)
+    return () => {
+      setIconListener(null)
+      unsubscribeLogos()
+    }
   }, [requestDraw])
 
   // ---- camera ----------------------------------------------------------------------
 
-  const fitNow = (animate: boolean) => {
-    focusedSystemRef.current = null
+  // The camera targets below are computed from refs only, so reframe() can call them from the resize observer.
+
+  const galaxyCamera = (): Camera => {
     const { w, h } = sizeRef.current
     const points = [
       ...layoutRef.current.suns.flatMap((s) => [
@@ -263,8 +283,50 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
       ]),
       ...layoutRef.current.planets.map((p) => planetPosition(p, timeAt(performance.now()))),
     ]
-    const target = fitPoints(points, w, h, 140)
-    startTween(target, animate ? 500 : 0)
+    return fitPoints(points, w, h, 140)
+  }
+
+  const fitNow = (animate: boolean) => {
+    focusedSystemRef.current = null
+    anchorRef.current = { kind: 'galaxy' }
+    startTween(galaxyCamera(), animate ? 500 : 0)
+  }
+
+  /** Frames a planet's whole orbit, centred on its sun, so the star and the neighbouring planets stay in context. */
+  const agentCamera = (id: string): Camera | null => {
+    const planet = layoutRef.current.planetById.get(id)
+    if (!planet) return null
+    // The zoom is capped: focus never zooms in past a readable level, and never out to a blur.
+    const { w, h } = sizeRef.current
+    const R = displayOrbit(planet, 1)
+    const pos = planetPosition(planet, timeAt(performance.now()))
+    const orbit = [
+      { x: planet.sunX - R, y: planet.sunY - R },
+      { x: planet.sunX + R, y: planet.sunY + R },
+      pos,
+    ]
+    const fit = fitPoints(orbit, w, h, 110)
+    return { x: fit.x, y: fit.y, zoom: clampZoom(Math.min(Math.max(fit.zoom, 0.9), 1.6)) }
+  }
+
+  const projectCamera = (projectId: string): Camera | null => {
+    const sun = layoutRef.current.sunById.get(projectId)
+    if (!sun) return null
+    return { x: sun.x, y: sun.y, zoom: clampZoom(Math.max(cameraRef.current.zoom, 0.8)) }
+  }
+
+  const systemCamera = (projectId: string): Camera | null => {
+    const sun = layoutRef.current.sunById.get(projectId)
+    if (!sun) return null
+    const { w, h } = sizeRef.current
+    return fitPoints(systemBounds(sun), w, h, 90)
+  }
+
+  /** Re-applies the last framing for the current canvas size. Duration 0 snaps, so a live resize tracks the panel. */
+  const reframe = (duration: number) => {
+    const a = anchorRef.current
+    const cam = a.kind === 'galaxy' ? galaxyCamera() : a.kind === 'agent' ? agentCamera(a.id) : a.kind === 'project' ? projectCamera(a.id) : systemCamera(a.id)
+    if (cam) startTween(cam, duration)
   }
 
   const startTween = (to: Camera, duration: number) => {
@@ -279,34 +341,25 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
   }
 
   const focusAgent = (id: string) => {
-    const planet = layoutRef.current.planetById.get(id)
-    if (!planet) return
-    // Frame the agent's whole orbit, centred on its sun, so the star and the neighbouring planets stay in
-    // context. The zoom is capped: focus never zooms in past a readable level, and never out to a blur.
-    const { w, h } = sizeRef.current
-    const R = displayOrbit(planet, 1)
-    const pos = planetPosition(planet, timeAt(performance.now()))
-    const orbit = [
-      { x: planet.sunX - R, y: planet.sunY - R },
-      { x: planet.sunX + R, y: planet.sunY + R },
-      pos,
-    ]
-    const fit = fitPoints(orbit, w, h, 110)
-    startTween({ x: fit.x, y: fit.y, zoom: clampZoom(Math.min(Math.max(fit.zoom, 0.9), 1.6)) }, FOCUS_MS)
+    const cam = agentCamera(id)
+    if (!cam) return
+    anchorRef.current = { kind: 'agent', id }
+    startTween(cam, FOCUS_MS)
   }
 
   const focusProject = (projectId: string) => {
-    const sun = layoutRef.current.sunById.get(projectId)
-    if (!sun) return
-    startTween({ x: sun.x, y: sun.y, zoom: clampZoom(Math.max(cameraRef.current.zoom, 0.8)) }, FOCUS_MS)
+    const cam = projectCamera(projectId)
+    if (!cam) return
+    anchorRef.current = { kind: 'project', id: projectId }
+    startTween(cam, FOCUS_MS)
   }
 
   const focusSystem = (projectId: string) => {
-    const sun = layoutRef.current.sunById.get(projectId)
-    if (!sun) return
-    const { w, h } = sizeRef.current
+    const cam = systemCamera(projectId)
+    if (!cam) return
     focusedSystemRef.current = projectId
-    startTween(fitPoints(systemBounds(sun), w, h, 90), FOCUS_MS)
+    anchorRef.current = { kind: 'system', id: projectId }
+    startTween(cam, FOCUS_MS)
   }
 
   useImperativeHandle(
@@ -346,16 +399,19 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
     const canvas = canvasRef.current
     if (!container || !canvas) return
 
-    const galaxy = createGalaxy(container)
+    const galaxy = propsRef.current.lightTheme ? null : createGalaxy(container)
     galaxyRef.current = galaxy
     galaxy?.setField(fieldRef.current)
     galaxy?.setReducedMotion(propsRef.current.reducedMotion)
 
     const resize = () => {
       const rect = container.getBoundingClientRect()
+      // A hidden galaxy (focus mode) reports no size. Keep the last real size instead of collapsing to 1px.
+      if (rect.width < 1 || rect.height < 1) return
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
       const w = Math.max(1, Math.floor(rect.width))
       const h = Math.max(1, Math.floor(rect.height))
+      const prev = sizeRef.current
       sizeRef.current = { w, h, dpr }
       canvas.width = Math.floor(w * dpr)
       canvas.height = Math.floor(h * dpr)
@@ -367,6 +423,9 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
       if (!fittedRef.current && projectsRef.current.size > 0) {
         fitNow(false)
         fittedRef.current = true
+      } else if (prev.w > 0 && (prev.w !== w || prev.h !== h)) {
+        // The chat panel moved or the window changed size: scale and re-centre on the same target, without a tween.
+        reframe(0)
       }
       requestDraw()
     }
@@ -473,6 +532,15 @@ export const Universe = forwardRef<UniverseHandle, UniverseProps>(function Unive
       if (!hit) {
         propsRef.current.onSelectAgent(null)
       } else if (hit.kind === 'planet') {
+        // A second click on the same planet within the window opens its conversation in focus mode.
+        const now = performance.now()
+        const last = lastPlanetClickRef.current
+        if (last && last.id === hit.id && now - last.at < DOUBLE_CLICK_MS) {
+          lastPlanetClickRef.current = null
+          propsRef.current.onEnterFocus(hit.id)
+          return
+        }
+        lastPlanetClickRef.current = { id: hit.id, at: now }
         focusAgent(hit.id)
         propsRef.current.onSelectAgent(hit.id)
       } else if (hit.kind === 'rock') {

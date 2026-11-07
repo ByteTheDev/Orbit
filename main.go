@@ -17,7 +17,7 @@ var assets embed.FS
 func main() {
 	// Agents start this same executable with the browser flag to get the browser tool. That run
 	// serves MCP on stdin and stdout and never opens the window.
-	if slices.Contains(os.Args[1:], browser.MCPFlag) {
+	if slices.Contains(os.Args[1:], browser.MCPFlag) || os.Getenv("ORBIT_BROWSER_MCP") == "1" {
 		if err := browser.ServeMCP(os.Stdin, os.Stdout); err != nil {
 			os.Exit(1)
 		}

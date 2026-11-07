@@ -77,8 +77,8 @@ describe('sidebar at scale', () => {
     )
     expect(performance.now() - started).toBeLessThan(2000)
     expect(rows).toHaveLength(60)
-    // Per project: its header button, one button per agent, and the "Launch agent here" button.
-    expect((html.match(/data-nav-item/g) ?? []).length).toBe(60 * (1 + 25 + 1))
+    // Per project: its header button and one button per agent. Projects with agents show no launch row.
+    expect((html.match(/data-nav-item/g) ?? []).length).toBe(60 * (1 + 25))
   })
 
   it('keeps the usual view small: only the active project is expanded by default', () => {
@@ -129,10 +129,10 @@ describe('sidebar at scale', () => {
     expect((html.match(/data-nav-item/g) ?? []).length).toBe(4)
   })
 
-  it('says so when nothing is active', () => {
+  it('draws no Active section when nothing is active', () => {
     const quiet = fleet.agents.map((a) => ({ ...a, status: 'idle' as Status, running: false }))
     const html = renderToStaticMarkup(<ActiveAgents agents={quiet} projects={fleet.projects} selectedId={null} onFocusAgent={() => {}} />)
-    expect(html).toContain('Nothing running right now')
+    expect(html).toBe('')
   })
 
   it('renders the collapsed rail with one mark per project and a status dot where work is happening', () => {

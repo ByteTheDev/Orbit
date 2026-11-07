@@ -5,7 +5,8 @@ import { api, errorText } from '../../lib/bridge'
 import { changeLabel, groupChanges, rowKey, type ChangeSide } from '../../lib/gitChanges'
 import { baseName, dirName, timeAgo } from '../../lib/format'
 import type { GitChange, GitCommit, GitStatus } from '../../types'
-import { Button, Spinner } from '../ui'
+import { Button, Spinner, SwitchGlyph } from '../ui'
+import { FileIcon } from '../ui/FileIcon'
 import { DiffView } from '../dialogs/Dialogs'
 import { IconBranch, IconCommit } from './inspectorIcons'
 
@@ -129,11 +130,9 @@ export function GitTab({ projectId, agentStatus }: { projectId: string; agentSta
             aria-checked={autoCommit}
             aria-labelledby="auto-commit-label"
             onClick={() => void setAutoCommit(projectId, !autoCommit)}
-            className={`relative h-4 w-7 shrink-0 rounded-full transition-colors duration-150 ${autoCommit ? 'bg-ok' : 'bg-white/[0.12]'}`}
+            className="shrink-0 rounded-md outline-none transition-opacity duration-150 hover:opacity-80"
           >
-            <span
-              className={`absolute top-0.5 h-3 w-3 rounded-full bg-canvas transition-transform duration-150 motion-reduce:transition-none ${autoCommit ? 'translate-x-3.5' : 'translate-x-0.5'}`}
-            />
+            <SwitchGlyph on={autoCommit} size={28} />
           </button>
         </div>
 
@@ -283,13 +282,14 @@ function ChangeRow({
   const label = changeLabel(change, side)
   return (
     <li
-      className={`group flex items-center gap-2 rounded-md py-1 pl-2 pr-1 transition-colors duration-150 ${active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.04]'}`}
+      className={`group flex items-center gap-2 rounded-md py-1 pl-2 pr-1 transition-colors duration-150 ${active ? 'bg-tint/[0.07]' : 'hover:bg-tint/[0.04]'}`}
     >
       <button type="button" onClick={onSelect} aria-pressed={active} title={change.path} className="flex min-w-0 flex-1 items-center gap-2.5 py-0.5 text-left">
         <span className="flex w-[84px] shrink-0 items-center gap-1.5 text-label text-muted">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: changeTone(label) }} aria-hidden="true" />
           {label}
         </span>
+        <FileIcon path={change.path} size={16} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-caption text-ink">{baseName(change.path)}</span>
           {dirName(change.path) && <span className="block truncate font-mono text-label text-faint">{dirName(change.path)}</span>}

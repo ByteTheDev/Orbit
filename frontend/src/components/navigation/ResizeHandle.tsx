@@ -70,7 +70,7 @@ export function ResizeHandle({ width, onPreview, onCommit }: Props) {
       onKeyDown={onKeyDown}
       className="group/resize absolute inset-y-0 -right-1.5 z-10 flex w-3 cursor-col-resize touch-none justify-center outline-none"
     >
-      <span className="h-full w-px bg-line transition-colors duration-150 group-hover/resize:bg-white/40 group-focus-visible/resize:bg-white/50 group-active/resize:bg-white/60" />
+      <span className="h-full w-px bg-line transition-colors duration-150 group-hover/resize:bg-tint/40 group-focus-visible/resize:bg-tint/50 group-active/resize:bg-tint/60" />
     </div>
   )
 }

@@ -5,30 +5,16 @@ import { createProject, deleteProject, launchAgent, removeAgent, setProjectIcon,
 import { closeDialog, openDialog, useStore, type Dialog as DialogState } from '../../lib/store'
 import { SettingsDialog } from '../settings/SettingsDialog'
 import { BrowserDialog } from '../browser/BrowserDialog'
+import { AutomationsDialog } from '../automations/AutomationsDialog'
 import { baseName, projectMark, timeAgo } from '../../lib/format'
 import { identityFor } from '../../lib/projectIdentity'
 import { STATUS_COLOR } from '../../lib/theme'
-import type { FileDiffResult } from '../../types'
-import { Button, Dialog, Field, IconAlert, IconCheck, IconChevronDown, IconCpu, IconEye, IconFolder, IconPencil, IconPlay, IconPlus, IconShield, IconText, IconUnlock, Input, ModelPicker, ProviderMark, Select, Spinner, Textarea } from '../ui'
-
-function IconBolt() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="text-muted">
-      <path d="M13.2 2.5 4.6 13.4h6.1l-.9 8.1 8.6-10.9h-6.1l.9-8.1Z" />
-    </svg>
-  )
-}
-
-/** A gauge: the thinking-effort control's icon, matching the bolt's size and colour. */
-function IconBrain({ size = 13 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" aria-hidden="true" className="shrink-0">
-      <path d="M4.5 15a7.5 7.5 0 0 1 15 0" />
-      <path d="M12 15l3.5-3.5" />
-      <path d="M7 19h10" />
-    </svg>
-  )
-}
+import type { BranchInfo, FileDiffResult } from '../../types'
+import { IconBranch } from '../inspector/inspectorIcons'
+import { defaultModelFor } from '../../lib/defaultModel'
+import { Button, Dialog, Field, IconAlert, IconCheck, IconEye, IconFolder, IconPencil, IconPlay, IconPlus, IconShield, IconText, IconUnlock, Input, ProviderMark, Select, Spinner, Textarea } from '../ui'
+import { SpeedPicker, speedOf, speedOptionsFor } from '../ui/SpeedPicker'
+import { ModelFields } from './TeamFields'
 
 /** Renders whichever dialog the store asks for. */
 export function Dialogs() {
@@ -72,6 +58,8 @@ function renderDialog(dialog: NonNullable<DialogState>, close: () => void): Reac
       return <ProjectIconDialog projectId={dialog.projectId} onClose={close} />
     case 'browser':
       return <BrowserDialog initialUrl={dialog.url} onClose={close} />
+    case 'automations':
+      return <AutomationsDialog onClose={close} />
     default:
       return null
   }
@@ -159,18 +147,18 @@ function ProjectDialog({ onClose }: { onClose: () => void }) {
 
 // ---- launch ----------------------------------------------------------------------
 
-const EFFORT_NAMES: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', ultra: 'Ultra' }
+/** The branch picker's value for "New branch…". It contains a space, which git never allows in a branch name, so it cannot clash with one. */
+const NEW_BRANCH = 'new branch…'
 
-/** Human name for a thinking effort level. Unknown levels are shown as the CLI gives them. */
-function effortName(level: string): string {
-  return EFFORT_NAMES[level] ?? level
-}
+/** Permission modes that let the agent act without asking. They get a warning instead of a quiet note. */
+const RISKY_MODES = new Set(['bypassPermissions', 'danger-full-access', 'full-access'])
 
 function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; onClose: () => void }) {
   const projectOrder = useStore((s) => s.projectOrder)
   const projects = useStore((s) => s.projects)
   const providers = useStore((s) => s.providers)
   const activeProjectId = useStore((s) => s.activeProjectId)
+  const defaultModels = useStore((s) => s.settings.defaultModels)
 
   const firstAvailable = providers.find((p) => p.available)?.id ?? providers[0]?.id ?? ''
   const [projectId, setProjectId] = useState(presetProjectId ?? activeProjectId ?? projectOrder[0] ?? '')
@@ -182,51 +170,103 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
   const [model, setModel] = useState('')
   const [task, setTask] = useState('')
   const [fast, setFast] = useState(false)
+  const [ultra, setUltra] = useState(false)
   const [effort, setEffort] = useState('')
   const [busy, setBusy] = useState(false)
+  // Branches belong to one project, so the list reloads when the project changes. Empty choice = project folder.
+  const [branches, setBranches] = useState<BranchInfo | null>(null)
+  const [branchError, setBranchError] = useState('')
+  const [branchChoice, setBranchChoice] = useState('')
+  const [newBranchName, setNewBranchName] = useState('')
+  const newMode = branchChoice === NEW_BRANCH
+
+  useEffect(() => {
+    let live = true
+    setBranches(null)
+    setBranchError('')
+    setBranchChoice('')
+    if (projectId) {
+      api
+        .projectBranches(projectId)
+        .then((info) => {
+          if (!live) return
+          setBranches(info)
+          setBranchChoice(info.current)
+        })
+        .catch((err: unknown) => {
+          if (live) setBranchError(errorText(err))
+        })
+    }
+    return () => {
+      live = false
+    }
+  }, [projectId])
 
   const models = provider?.capabilities.models ?? []
   // Fast mode is a per-model option. It shows only where some model offers it, and is on only for a model that does.
   const fastOffered = models.some((m) => m.fastMode)
   const fastAvailable = models.find((m) => m.id === model)?.fastMode ?? false
   const fastOn = fastOffered && fastAvailable && fast
+  // Ultrafast is offered only on a model the signed-in account can run that way, and is on only then.
+  const ultraAvailable = models.find((m) => m.id === model)?.ultraFast ?? false
+  const ultraOn = ultraAvailable && ultra
   // Thinking effort is per model: each one offers its own levels, so the choice only applies to the selected model.
   const selectedModel = models.find((m) => m.id === model)
   const effortLevels = selectedModel?.effort ?? []
   const effortOn = effortLevels.includes(effort) ? effort : ''
-  // Both get the drifting border: Ultra (Codex-only) in purple, Claude's max in rainbow.
-  const effortTone = effortOn === 'ultra' ? 'effort-ultra' : effortOn === 'max' && providerId === 'claude' ? 'effort-rainbow' : ''
-  // Thinking and fast mode are rarely changed, so they sit behind one disclosure. Set values stay visible in its summary.
-  const hasAdvanced = effortLevels.length > 0 || fastOffered
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-  const advancedSummary = [effortOn ? effortName(effortOn) : '', fastOn ? 'Fast mode' : ''].filter(Boolean).join(' · ')
 
   useEffect(() => {
     setMode(modes[0]?.id ?? '')
-    // A model from one provider means nothing to another, so the choice resets with the provider.
-    setModel('')
+    // A model from one provider means nothing to another, so the choice follows the provider: its saved default, if it still offers it.
+    setModel(defaultModelFor(defaultModels, providerId, models))
     setFast(false)
+    setUltra(false)
     setEffort('')
     // Only reset when the provider changes, not when the list object identity does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerId])
 
   const project = projects[projectId]
-  const canLaunch = !!project && !!provider?.available && !busy
+  const canLaunch = !!project && !!provider?.available && !busy && (!newMode || newBranchName.trim() !== '')
+
+  const root = branches?.worktreeRoot ?? ''
+  const branchHint = !branches
+    ? ''
+    : newMode
+      ? `A new branch from ${branches.current || 'HEAD'} gets its own worktree in ${root}.`
+      : branchChoice && branchChoice !== branches.current
+        ? `Runs in its own worktree under ${root}.`
+        : 'Runs in the project folder.'
+
+  // The field notes. Secondary explanations live in tooltips; only a branch note shows inline, because it changes where the agent works.
+  const branchNote = !branches
+    ? ''
+    : newMode
+      ? `New branch from ${branches.current || 'HEAD'}`
+      : branchChoice && branchChoice !== branches.current
+        ? 'Separate worktree'
+        : ''
+  const selectedMode = modes.find((m) => m.id === mode)
+  const modeRisky = RISKY_MODES.has(mode)
+  const taskNote = `Empty starts idle. ${provider?.name ?? 'The agent'} runs in ${project ? project.repoPath : 'the project folder'}. Ctrl/⌘+Enter launches.`
 
   const submit = async () => {
     if (!canLaunch) return
     setBusy(true)
-    await launchAgent({
+    const first = {
       projectId,
       name: name.trim(),
       provider: providerId,
       model: model.trim(),
       permissionMode: mode,
       task: task.trim(),
-      fastMode: fastOn,
+      fastMode: fastOn || ultraOn,
+      ultraFast: ultraOn,
       effort: effortOn,
-    })
+      branch: newMode ? newBranchName.trim() : branchChoice,
+      newBranch: newMode,
+    }
+    await launchAgent(first)
     setBusy(false)
   }
 
@@ -243,6 +283,17 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
     document.getElementById(`launch-provider-${next.id}`)?.focus()
   }
 
+  // The permission group is a radio group too: arrows move and focus the next choice.
+  const onModeKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
+    if (!step || modes.length === 0) return
+    const idx = Math.max(0, modes.findIndex((m) => m.id === mode))
+    const next = modes[(idx + step + modes.length) % modes.length]
+    e.preventDefault()
+    setMode(next.id)
+    document.getElementById(`launch-mode-${next.id}`)?.focus()
+  }
+
   // ⌘/Ctrl+Enter in the task box launches, so a keyboard user never has to reach for the button.
   const onTaskKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
@@ -254,7 +305,6 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
   return (
     <Dialog
       title="Launch an agent"
-      description="Pick a project and a provider. A task is optional; you can also send one later from Chat."
       onClose={onClose}
       width="max-w-[560px]"
       footer={
@@ -262,7 +312,7 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={() => void submit()} disabled={!canLaunch}>
+          <Button variant="primary" onClick={() => void submit()} disabled={!canLaunch} title="Launch (Ctrl/⌘+Enter in the task box)">
             {!busy && <IconPlay size={11} />}
             {busy ? 'Launching…' : 'Launch agent'}
           </Button>
@@ -278,50 +328,84 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
           </Button>
         </div>
       ) : (
-        <div className="space-y-5">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-3.5">
+          <SectionLabel>Setup</SectionLabel>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
             <Field label="Project" htmlFor="launch-project" icon={<IconFolder size={13} />}>
-              <Select id="launch-project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                {projectOrder.map((id) => (
-                  <option key={id} value={id}>
-                    {projects[id]?.name}
-                  </option>
-                ))}
-              </Select>
+              <div title={project?.repoPath}>
+                <Select id="launch-project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                  {projectOrder.map((id) => (
+                    <option key={id} value={id}>
+                      {projects[id]?.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
             </Field>
             <Field label="Name" htmlFor="launch-name" icon={<IconPencil size={13} />}>
               <Input id="launch-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Refactor agent" maxLength={60} />
             </Field>
           </div>
 
+          <Field label="Branch" htmlFor="launch-branch" hint={branchError ? undefined : branchNote} icon={<IconBranch size={13} />}>
+            {branchError ? (
+              <p className="text-caption text-faint">Branches unavailable: {branchError}. The agent runs in the project folder.</p>
+            ) : (
+              <div className="space-y-2" title={branchHint || undefined}>
+                <Select id="launch-branch" aria-label="Branch" value={branchChoice} disabled={!branches} onChange={(e) => setBranchChoice(e.target.value)}>
+                  {!branches && <option value="">Loading branches…</option>}
+                  {branches && !branches.current && <option value="">Project folder (detached HEAD)</option>}
+                  {branches?.branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b === branches.current ? `${b} (current)` : b}
+                    </option>
+                  ))}
+                  {branches && <option value={NEW_BRANCH}>New branch…</option>}
+                </Select>
+                {newMode && (
+                  <Input
+                    id="launch-new-branch"
+                    value={newBranchName}
+                    onChange={(e) => setNewBranchName(e.target.value)}
+                    placeholder="feature/my-change"
+                    maxLength={100}
+                    aria-label="New branch name"
+                    className="font-mono text-caption"
+                  />
+                )}
+              </div>
+            )}
+          </Field>
+
+          <SectionLabel>Agent</SectionLabel>
           <fieldset>
-            <legend className="mb-2 flex items-center gap-1.5 text-caption font-medium text-muted">Provider</legend>
-            <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Provider" onKeyDown={onProviderKey}>
+            <legend className="mb-1.5 text-caption font-medium text-muted">Provider</legend>
+            <div className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]" role="radiogroup" aria-label="Provider" onKeyDown={onProviderKey}>
               {providers.map((p) => {
                 const selected = p.id === providerId
                 return (
                   <button
                     key={p.id}
                     id={`launch-provider-${p.id}`}
+                    type="button"
                     role="radio"
                     aria-checked={selected}
                     tabIndex={selected ? 0 : -1}
                     disabled={!p.available}
                     onClick={() => setProviderId(p.id)}
-                    className={`flex min-w-0 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-[border-color,background-color] duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-45 ${
-                      selected ? 'border-ink/50 bg-white/[0.07]' : 'border-line bg-surface hover:border-line-strong hover:bg-hover'
+                    title={p.available ? p.path : p.hint}
+                    className={`flex h-10 min-w-0 items-center gap-2 rounded-md border px-2.5 text-left outline-none transition-[border-color,background-color] duration-150 ease-out focus-visible:ring-[3px] focus-visible:ring-tint/[0.08] disabled:cursor-not-allowed disabled:opacity-45 ${
+                      selected ? 'border-tint/25 bg-tint/[0.06]' : 'border-line bg-surface hover:border-line-strong hover:bg-hover'
                     }`}
                   >
-                    <ProviderMark provider={p.id} size={24} />
+                    <ProviderMark provider={p.id} size={20} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-body font-semibold text-ink">{p.name}</span>
-                      <span className={`block truncate text-caption ${p.available ? 'text-faint' : 'text-warn-soft'}`} title={p.available ? p.path : p.hint}>
-                        {p.available ? 'Installed' : 'Not installed'}
-                      </span>
+                      <span className={`block truncate text-caption font-semibold ${p.available ? 'text-ink' : 'text-muted'}`}>{p.name}</span>
+                      <span className={`block truncate text-label ${p.available ? 'text-faint' : 'text-warn-soft'}`}>{p.available ? 'Installed' : 'Not installed'}</span>
                     </span>
                     {selected && (
-                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-ink text-canvas" aria-hidden="true">
-                        <IconCheck size={9} />
+                      <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-ink text-canvas" aria-hidden="true">
+                        <IconCheck size={8} />
                       </span>
                     )}
                   </button>
@@ -330,153 +414,89 @@ function LaunchDialog({ presetProjectId, onClose }: { presetProjectId?: string; 
             </div>
           </fieldset>
 
-          <Field
-            label="Task"
-            htmlFor="launch-task"
-            hint={`Empty starts idle. ${provider?.name ?? 'The agent'} runs in ${project ? project.repoPath : 'the project folder'}.`}
-            icon={<IconText size={13} />}
-          >
+          {provider && !provider.available && (
+            <p className="flex items-start gap-2 rounded-md border border-warn/25 bg-warn/[0.06] px-2.5 py-1.5 text-caption text-warn-soft">
+              <IconAlert size={12} className="mt-0.5 shrink-0" />
+              {provider.name} isn’t installed, so this provider can’t launch yet.
+            </p>
+          )}
+
+          <ModelFields
+            idPrefix="launch"
+            providerId={providerId}
+            models={models}
+            model={model}
+            onModel={(next) => {
+              setModel(next)
+              setEffort('')
+            }}
+            effort={effortOn}
+            onEffort={setEffort}
+          />
+
+          {fastOffered && (
+            <Field label="Speed" hint={fastAvailable ? undefined : 'Needs a model that supports fast mode.'}>
+              <SpeedPicker
+                value={speedOf(fastOn, ultraOn)}
+                options={speedOptionsFor(ultraAvailable)}
+                disabled={!fastAvailable}
+                aria-label="Speed for the new agent"
+                onChange={(id) => {
+                  setFast(id !== 'standard')
+                  setUltra(id === 'ultrafast')
+                }}
+              />
+            </Field>
+          )}
+
+          <SectionLabel>Task</SectionLabel>
+          <Field label="Permissions" icon={<IconShield size={13} />}>
+            <div id="launch-mode" role="radiogroup" aria-label="Permissions" onKeyDown={onModeKey} className="flex gap-0.5 rounded-lg border border-line bg-surface p-0.5">
+              {modes.map((m) => {
+                const selected = m.id === mode
+                const Icon = RISKY_MODES.has(m.id) ? IconUnlock : m.id === 'plan' || m.id === 'read-only' ? IconEye : IconShield
+                return (
+                  <button
+                    key={m.id}
+                    id={`launch-mode-${m.id}`}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    tabIndex={selected ? 0 : -1}
+                    disabled={modes.length <= 1}
+                    onClick={() => setMode(m.id)}
+                    title={m.description}
+                    className={`flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-2 text-caption font-medium outline-none transition-[background-color,color] duration-150 focus-visible:ring-[3px] focus-visible:ring-tint/[0.08] disabled:cursor-default ${
+                      selected ? 'bg-tint/[0.09] text-ink shadow-sm shadow-black/30' : 'text-muted hover:text-ink'
+                    }`}
+                  >
+                    <Icon size={12} className="shrink-0" />
+                    <span className="truncate">{m.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {selectedMode?.description && (
+              // The one permission explanation that stays visible. A full-access mode gets a warning, not a quieter note.
+              <p className={`flex items-start gap-1.5 text-label leading-relaxed ${modeRisky ? 'text-warn-soft' : 'text-faint'}`}>
+                {modeRisky && <IconAlert size={11} className="mt-0.5 shrink-0" />}
+                {selectedMode.description}
+              </p>
+            )}
+          </Field>
+
+          <Field label="Task" htmlFor="launch-task" icon={<IconText size={13} />}>
             <Textarea
               id="launch-task"
               value={task}
               onChange={(e) => setTask(e.target.value)}
               onKeyDown={onTaskKey}
               rows={3}
+              title={taskNote}
               placeholder="Add a loading state to the settings page and write a test for it."
             />
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field
-              label="Model"
-              htmlFor="launch-model"
-              hint={models.find((m) => m.id === model)?.description ?? (models.length ? 'Empty uses the provider default.' : `${provider?.name ?? 'The provider'} picks its own model.`)}
-              icon={<IconCpu size={13} />}
-            >
-              {models.length === 0 ? (
-              <Input
-                id="launch-model"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="Provider default"
-                aria-label="Model"
-              />
-            ) : (
-              <ModelPicker
-                id="launch-model"
-                value={model}
-                onChange={(next) => {
-                  setModel(next)
-                  setEffort('')
-                }}
-                models={models}
-                provider={provider?.id ?? ''}
-                defaultLabel="Provider default"
-                disabled={false}
-                aria-label="Model"
-              />
-            )}
-            </Field>
-            <Field label="Permissions" htmlFor="launch-mode" hint={modes.find((m) => m.id === mode)?.description} icon={<IconShield size={13} />}>
-              <div id="launch-mode" role="radiogroup" aria-label="Permissions" className="grid grid-cols-2 gap-1.5">
-                {modes.map((m) => {
-                  const selected = m.id === mode
-                  const Icon = m.id === 'bypassPermissions' || m.id === 'danger-full-access' || m.id === 'full-access' ? IconUnlock : m.id === 'plan' || m.id === 'read-only' ? IconEye : IconShield
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      disabled={modes.length <= 1}
-                      onClick={() => setMode(m.id)}
-                      className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-body font-medium transition-colors disabled:cursor-default ${
-                        selected ? 'border-ink/50 bg-white/[0.07] text-ink' : 'border-line bg-surface text-muted hover:border-line-strong hover:bg-hover hover:text-ink'
-                      }`}
-                    >
-                      <Icon size={14} />
-                      {m.label}
-                    </button>
-                  )
-                })}
-              </div>
-            </Field>
-          </div>
-
-          {hasAdvanced && (
-            <section>
-              <button
-                type="button"
-                aria-expanded={advancedOpen}
-                aria-controls="launch-advanced"
-                onClick={() => setAdvancedOpen((v) => !v)}
-                className="flex items-center gap-1.5 rounded text-caption font-medium text-muted transition-colors duration-150 hover:text-ink"
-              >
-                <IconChevronDown size={10} className={`transition-transform duration-200 motion-reduce:transition-none ${advancedOpen ? '' : '-rotate-90'}`} />
-                Advanced
-                {advancedSummary && <span className="font-normal text-faint">· {advancedSummary}</span>}
-              </button>
-              {advancedOpen && (
-                <div id="launch-advanced" className="mt-3 space-y-5">
-          {effortLevels.length > 0 && (
-            <Field
-              label="Thinking"
-              htmlFor="launch-effort"
-              hint={`How hard the model thinks before it answers. ${selectedModel?.defaultEffort ? `Default is ${effortName(selectedModel.defaultEffort).toLowerCase()}.` : 'Default is the CLI setting.'}`}
-              icon={<IconBrain size={13} />}
-            >
-              <Select id="launch-effort" value={effortOn} onChange={(e) => setEffort(e.target.value)} className={effortTone}>
-                <option value="">{selectedModel?.defaultEffort ? `Default (${effortName(selectedModel.defaultEffort).toLowerCase()})` : 'Default'}</option>
-                {effortLevels.map((level) => (
-                  <option key={level} value={level}>
-                    {effortName(level)}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          )}
-
-          {fastOffered && (
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-white/[0.02] px-3 py-2.5">
-              <div className="min-w-0">
-                <p id="launch-fast-label" className="flex items-center gap-1.5 text-body font-medium text-ink">
-                  <IconBolt />
-                  Fast mode
-                </p>
-                <p className="mt-0.5 text-caption text-faint">
-                  {fastAvailable ? 'Faster output from this model.' : 'Choose a model that supports fast mode.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={fastOn}
-                aria-labelledby="launch-fast-label"
-                disabled={!fastAvailable}
-                onClick={() => setFast((v) => !v)}
-                className={`relative h-5 w-9 shrink-0 rounded-full transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
-                  fastOn ? 'bg-ink' : 'bg-white/[0.12]'
-                }`}
-              >
-                <span
-                  className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-canvas transition-transform duration-150 motion-reduce:transition-none ${
-                    fastOn ? 'translate-x-[18px]' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
-            </div>
-          )}
-                </div>
-              )}
-            </section>
-          )}
-
-          {provider && !provider.available && (
-            <p className="flex items-start gap-2 rounded-md border border-warn/25 bg-warn/[0.06] px-3 py-2 text-caption text-warn-soft">
-              <IconAlert size={13} className="mt-0.5" />
-              {provider.name} isn’t installed, so this provider can’t launch yet.
-            </p>
-          )}
         </div>
       )}
     </Dialog>
@@ -572,7 +592,7 @@ const DIFF_TONE: Record<DiffKind, string> = {
   add: 'bg-ok/[0.07] text-ok',
   del: 'bg-danger/[0.07] text-danger-soft',
   ctx: 'text-ink/70',
-  hunk: 'bg-white/[0.03] text-muted',
+  hunk: 'bg-tint/[0.03] text-muted',
   meta: 'text-faint',
 }
 const DIFF_SIGN: Record<DiffKind, string> = { add: '+', del: '−', ctx: ' ', hunk: ' ', meta: ' ' }

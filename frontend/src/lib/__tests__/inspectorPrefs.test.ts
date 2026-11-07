@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { INSPECTOR_DEFAULT, INSPECTOR_MAX, INSPECTOR_MIN, clampInspectorWidth, loadInspectorWidth, saveInspectorWidth } from '../inspectorPrefs'
+import { INSPECTOR_DEFAULT, INSPECTOR_MAX, INSPECTOR_MIN, clampInspectorWidth, loadInspectorWidth, saveInspectorWidth, toggleInspectorWidth } from '../inspectorPrefs'
+
+describe('toggleInspectorWidth', () => {
+  it('expands a narrower panel to the maximum', () => {
+    expect(toggleInspectorWidth(INSPECTOR_DEFAULT)).toBe(INSPECTOR_MAX)
+    expect(toggleInspectorWidth(INSPECTOR_MIN)).toBe(INSPECTOR_MAX)
+  })
+
+  it('collapses a panel at or near the maximum back to the default', () => {
+    expect(toggleInspectorWidth(INSPECTOR_MAX)).toBe(INSPECTOR_DEFAULT)
+    expect(toggleInspectorWidth(INSPECTOR_MAX - 4)).toBe(INSPECTOR_DEFAULT)
+  })
+
+  it('starts at the 420px default and expands to 600px', () => {
+    expect(INSPECTOR_DEFAULT).toBe(420)
+    expect(INSPECTOR_MAX).toBe(600)
+  })
+})
 
 function memory(initial: string | null = null) {
   let value = initial

@@ -1,10 +1,11 @@
 import { Fragment, type KeyboardEvent, type MouseEvent } from 'react'
 import { openDialog, selectAgent } from '../../lib/store'
-import { IconChevronDown, IconPlus } from '../ui'
+import { IconChevronDown } from '../ui'
 import { AgentItem, StatusGlyph } from './AgentItem'
 import type { NavProject } from './projectFilter'
 import { ProjectMark } from './ProjectMark'
 import { projectStatus, projectSummary, type SummaryPart } from './projectSummary'
+import { MaterialIcon } from '../ui'
 import { Tooltip } from './Tooltip'
 
 interface Props {
@@ -20,10 +21,11 @@ interface Props {
 }
 
 /**
- * One project in the navigator. The name and a summary line (conflicts, running, agent count)
- * sit on the left. One status glyph shows the most urgent agent state. A single actions button
- * opens the project menu, so every action is reachable by mouse, keyboard, and right-click alike.
- * The active project is marked by a soft fill and a heavier name, never by a bright border.
+ * One project in the navigator: a chevron, the project mark, the name, and an optional summary line.
+ * One status glyph shows the most urgent agent state. The actions button and right-click open the
+ * project menu, so every action is reachable by mouse, keyboard, and right-click alike, and the
+ * button only shows on hover or focus. The active project is marked by a faint fill and a heavier name.
+ * A project with no agents shows one line in its list: the launch action. Nothing else.
  */
 export function ProjectItem({ nav, active, expanded, selectedAgentId, onToggle, onSelect, onFocusAgent, onContextMenu, onAgentContextMenu }: Props) {
   const { project, agents, allAgents, filtering } = nav
@@ -58,11 +60,10 @@ export function ProjectItem({ nav, active, expanded, selectedAgentId, onToggle, 
       <div
         onKeyDown={onKey}
         onContextMenu={menu}
-        className={`group relative flex items-center rounded-lg pr-1 transition-colors duration-150 ${
-          active ? 'bg-row-active' : 'hover:bg-row-hover'
+        className={`group relative flex items-center rounded-md pr-1 transition-colors duration-150 ${
+          active ? 'bg-nav-active' : 'hover:bg-nav-hover'
         }`}
       >
-        {active && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-ink" aria-hidden="true" />}
         <button
           type="button"
           onClick={onToggle}
@@ -70,7 +71,7 @@ export function ProjectItem({ nav, active, expanded, selectedAgentId, onToggle, 
           aria-controls={panelId}
           aria-label={`${expanded ? 'Collapse' : 'Expand'} ${project.name}`}
           disabled={filtering}
-          className={`ml-0.5 flex h-9 w-5 shrink-0 items-center justify-center rounded transition-colors duration-150 hover:text-ink disabled:opacity-30 ${
+          className={`nav-item ml-0.5 flex h-7 w-4 shrink-0 items-center justify-center transition-colors duration-150 hover:text-ink disabled:opacity-30 ${
             active ? 'text-muted' : 'text-faint'
           }`}
         >
@@ -83,19 +84,21 @@ export function ProjectItem({ nav, active, expanded, selectedAgentId, onToggle, 
           onClick={onSelect}
           aria-current={active ? 'true' : undefined}
           title={project.repoPath}
-          className="flex min-w-0 flex-1 items-center gap-2.5 py-2 pl-0.5 pr-1 text-left"
+          className="nav-item flex min-w-0 flex-1 items-center gap-2 py-1 pl-0.5 pr-1 text-left"
         >
-          <ProjectMark project={project} size={28} />
+          <ProjectMark project={project} size={24} fallback="dot" />
           <span className="min-w-0 flex-1">
             <span
               title={project.name}
-              className={`block truncate text-body leading-tight ${active ? 'font-semibold text-ink' : 'font-medium text-ink/90'}`}
+              className={`block truncate text-body leading-tight ${active ? 'font-semibold text-ink' : 'font-medium text-ink'}`}
             >
               {project.name}
             </span>
-            <span className="mt-0.5 flex min-w-0 items-center text-label leading-tight">
-              <SummaryLine parts={summary} />
-            </span>
+            {summary.length > 0 && (
+              <span className="mt-px flex min-w-0 items-center text-label leading-tight">
+                <SummaryLine parts={summary} />
+              </span>
+            )}
           </span>
         </button>
 
@@ -107,7 +110,7 @@ export function ProjectItem({ nav, active, expanded, selectedAgentId, onToggle, 
             onClick={openMenuFromButton}
             aria-label={`Actions for ${project.name}`}
             aria-haspopup="menu"
-            className="ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-faint opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-row-active hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+            className="ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-faint opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-nav-active hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
           >
             <IconDots />
           </button>
@@ -115,7 +118,8 @@ export function ProjectItem({ nav, active, expanded, selectedAgentId, onToggle, 
       </div>
 
       {expanded && (
-        <ul id={panelId} role="list" className="relative mb-2 ml-[19px] mt-0.5 space-y-px border-l border-line pl-2">
+        // The tree line sits under the project mark's centre; agent marks start just inside it.
+        <ul id={panelId} role="list" className="ml-[21px] mt-px space-y-px border-l border-line pb-1 pl-[5px]">
           {agents.map((a) => (
             <AgentItem
               key={a.id}
@@ -128,16 +132,15 @@ export function ProjectItem({ nav, active, expanded, selectedAgentId, onToggle, 
               onOpenMenu={(x, y) => onAgentContextMenu(a.id, x, y)}
             />
           ))}
-          {agents.length === 0 && !filtering && <li className="px-2 py-1.5 text-label text-faint">No agents yet</li>}
-          {!filtering && (
+          {!filtering && agents.length === 0 && (
+            // The one empty state: a single launch action, no extra label.
             <li>
               <button
                 type="button"
                 data-nav-item
                 onClick={() => openDialog({ kind: 'launch', projectId: project.id })}
-                className="group/launch flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-caption text-faint transition-colors duration-150 hover:bg-row-hover hover:text-muted"
+                className="nav-item flex items-center gap-1.5 py-1 pl-1.5 pr-2 text-caption text-muted transition-colors duration-150 hover:text-ink"
               >
-                <IconPlus size={10} />
                 Launch agent
               </button>
             </li>
@@ -154,10 +157,10 @@ function SummaryLine({ parts }: { parts: SummaryPart[] }) {
     <span className="flex min-w-0 items-center gap-1 truncate">
       {parts.map((p, i) => (
         <Fragment key={i}>
-          {i > 0 && <span className="text-faint/60" aria-hidden="true">·</span>}
+          {i > 0 && <span className="text-faint" aria-hidden="true">·</span>}
           <span
             className={
-              p.tone === 'warn' ? 'text-warn-soft' : p.tone === 'live' ? 'text-status-thinking' : 'text-faint'
+              p.tone === 'warn' ? 'text-warn-soft' : p.tone === 'live' ? 'text-status-thinking' : 'text-muted'
             }
           >
             {p.text}
@@ -169,11 +172,5 @@ function SummaryLine({ parts }: { parts: SummaryPart[] }) {
 }
 
 function IconDots() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="5" cy="12" r="1.8" />
-      <circle cx="12" cy="12" r="1.8" />
-      <circle cx="19" cy="12" r="1.8" />
-    </svg>
-  )
+  return <MaterialIcon name="more_horiz" size={12} />
 }

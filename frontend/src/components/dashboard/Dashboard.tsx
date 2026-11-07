@@ -12,7 +12,7 @@ const ROW_COLS = 'grid-cols-[minmax(0,2.2fr)_minmax(0,1.4fr)_88px_56px_56px_80px
 const NEEDS_EYES: Status[] = ['waiting', 'failed']
 
 /**
- * Mission control: system health first, then the agents that are working or waiting on you,
+ * Dashboard: system health first, then the agents that are working or waiting on you,
  * then every project's full roster. Picking a row flies the camera to that agent on the canvas.
  */
 export function Dashboard() {
@@ -60,7 +60,7 @@ export function Dashboard() {
   return (
     <section className="absolute inset-0 z-20 flex animate-fade-in flex-col bg-canvas/[0.97] backdrop-blur-sm motion-reduce:animate-none" aria-label="Dashboard">
       <header className="flex h-12 shrink-0 items-center gap-3 px-5">
-        <h2 className="text-title font-semibold text-ink">Mission control</h2>
+        <h2 className="text-title font-semibold text-ink">Dashboard</h2>
         <div className="flex-1" />
         <span className="hidden items-center gap-1.5 text-caption text-faint sm:flex">
           Close <Kbd>D</Kbd>
@@ -248,7 +248,7 @@ function StatusMix({ agents }: { agents: AgentSummary[] }) {
       title={`Status breakdown of ${agents.length} agent${agents.length === 1 ? '' : 's'} right now (${summary}). This shows how many agents are in each state, not how far the work has progressed.`}
     >
       <span className="text-label text-faint">Status</span>
-      <div className="flex h-1 w-28 overflow-hidden rounded-full bg-white/[0.06]" role="img" aria-label={`Agent status: ${summary}`}>
+      <div className="flex h-1 w-28 overflow-hidden rounded-full bg-tint/[0.06]" role="img" aria-label={`Agent status: ${summary}`}>
         {segments.map(({ status, n }) => (
           <span key={status} title={`${STATUS_LABEL[status]}: ${n}`} style={{ width: `${(n / agents.length) * 100}%`, background: STATUS_COLOR[status] }} />
         ))}

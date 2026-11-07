@@ -75,6 +75,10 @@ type Manager struct {
 	attachmentDir string
 	// browserCmd is the Orbit executable that gives agents the browser tool. See SetBrowserCommand.
 	browserCmd string
+	// automations are the scheduled launches. See automation.go.
+	automations map[string]*model.Automation
+	// sshProfiles are saved SSH connections. See ssh.go.
+	sshProfiles map[string]*model.SSHProfile
 }
 
 // New creates an empty manager. emit receives each flushed batch; onChange is
@@ -83,6 +87,8 @@ func New(emit func([]model.Event), onChange func()) *Manager {
 	return &Manager{
 		projects:      map[string]*model.Project{},
 		agents:        map[string]*model.AgentRecord{},
+		automations:   map[string]*model.Automation{},
+		sshProfiles:   map[string]*model.SSHProfile{},
 		runs:          map[string]*run{},
 		providers:     provider.Registry(),
 		dirtyAgents:   map[string]bool{},
@@ -117,6 +123,14 @@ func (m *Manager) Load(st store.State) {
 		}
 		m.agents[rec.ID] = &rec
 	}
+	for i := range st.Automations {
+		a := st.Automations[i]
+		m.automations[a.ID] = &a
+	}
+	for i := range st.SSHProfiles {
+		p := st.SSHProfiles[i]
+		m.sshProfiles[p.ID] = &p
+	}
 }
 
 // Persist calls fn with the current state while holding the lock, so the
@@ -124,13 +138,20 @@ func (m *Manager) Load(st store.State) {
 func (m *Manager) Persist(fn func(store.State) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	st := store.State{Version: store.Version}
+	st := store.State{Version: store.Version, Projects: []model.Project{}, Agents: []model.AgentRecord{}, Automations: []model.Automation{}, SSHProfiles: []model.SSHProfile{}}
 	for _, p := range m.projects {
 		st.Projects = append(st.Projects, *p)
 	}
 	for _, a := range m.agents {
 		st.Agents = append(st.Agents, *a)
 	}
+	for _, a := range m.automations {
+		st.Automations = append(st.Automations, *a)
+	}
+	for _, p := range m.sshProfiles {
+		st.SSHProfiles = append(st.SSHProfiles, *p)
+	}
+	sort.Slice(st.Automations, func(i, j int) bool { return st.Automations[i].CreatedAt < st.Automations[j].CreatedAt })
 	sort.Slice(st.Projects, func(i, j int) bool { return st.Projects[i].CreatedAt < st.Projects[j].CreatedAt })
 	sort.Slice(st.Agents, func(i, j int) bool { return st.Agents[i].CreatedAt < st.Agents[j].CreatedAt })
 	return fn(st)
@@ -206,7 +227,7 @@ func (m *Manager) ProjectPath(agentID string) (string, error) {
 	if !ok {
 		return "", errors.New("the agent's project no longer exists")
 	}
-	return p.RepoPath, nil
+	return agentDirLocked(rec, p), nil
 }
 
 // ---- projects -------------------------------------------------------------
@@ -273,6 +294,11 @@ func (m *Manager) DeleteProject(id string) error {
 			m.removeAgentLocked(agentID)
 		}
 	}
+	for autoID, a := range m.automations {
+		if a.ProjectID == id {
+			delete(m.automations, autoID)
+		}
+	}
 	m.clearIconLocked(m.projects[id])
 	delete(m.projects, id)
 	m.pending = append(m.pending, model.Event{Type: "projectRemoved", ID: id})
@@ -293,12 +319,25 @@ type LaunchRequest struct {
 	Task           string `json:"task"`
 	// FastMode runs the agent in fast mode. Only valid for a model that supports it.
 	FastMode bool `json:"fastMode"`
+	// UltraFast runs the agent in the account's ultrafast mode. It implies FastMode, and is only valid
+	// for a model the account can run that way.
+	UltraFast bool `json:"ultraFast"`
 	// Effort is the thinking effort level. Empty uses the CLI default. Must be one the model offers.
 	Effort string `json:"effort"`
+	// Branch is the git branch to work on. Empty uses the project folder as it is. With NewBranch
+	// set, Branch names a new branch to create from HEAD.
+	Branch    string `json:"branch"`
+	NewBranch bool   `json:"newBranch"`
 }
 
 // Launch creates an agent in a project and, when a task is given, starts its first turn.
 func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
+	return m.launch(req, "")
+}
+
+// launch creates an agent. When sameAs names an agent, the new one works in that agent's folder and
+// branch, so a pair shares its files. Otherwise the request's branch choice decides the workspace.
+func (m *Manager) launch(req LaunchRequest, sameAs string) (model.AgentSummary, error) {
 	prov, ok := m.providers[req.Provider]
 	if !ok {
 		return model.AgentSummary{}, fmt.Errorf("unknown provider %q", req.Provider)
@@ -312,6 +351,11 @@ func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
 			return model.AgentSummary{}, fmt.Errorf("%s does not offer the model %q", prov.Name(), req.Model)
 		}
 	}
+	if req.UltraFast && !prov.Capabilities().SupportsUltraFast(req.Model) {
+		return model.AgentSummary{}, fmt.Errorf("ultrafast mode is not available for this model on %s", prov.Name())
+	}
+	// Ultrafast is a faster tier of fast mode, so it turns fast mode on too.
+	req.FastMode = req.FastMode || req.UltraFast
 	if req.FastMode && !prov.Capabilities().SupportsFastMode(req.Model) {
 		return model.AgentSummary{}, fmt.Errorf("fast mode is not available for this model on %s", prov.Name())
 	}
@@ -319,14 +363,31 @@ func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
 		return model.AgentSummary{}, fmt.Errorf("%q thinking is not available for this model on %s", req.Effort, prov.Name())
 	}
 
+	// Creating a worktree runs git, so it happens before the lock: other agents are not held up by it.
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	proj, ok := m.projects[req.ProjectID]
+	m.mu.Unlock()
 	if !ok {
 		return model.AgentSummary{}, errors.New("choose a project first")
 	}
 	if info, err := os.Stat(proj.RepoPath); err != nil || !info.IsDir() {
 		return model.AgentSummary{}, errors.New("the project's repository folder is missing")
+	}
+	var dir, branch string
+	var err error
+	if sameAs != "" {
+		dir, branch, err = m.sharedWorkspace(sameAs, proj.RepoPath)
+	} else {
+		dir, branch, err = workspaceFor(proj, req)
+	}
+	if err != nil {
+		return model.AgentSummary{}, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.projects[req.ProjectID]; !ok {
+		return model.AgentSummary{}, errors.New("choose a project first")
 	}
 
 	mode := req.PermissionMode
@@ -345,6 +406,7 @@ func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
 		Provider:       prov.ID(),
 		Model:          strings.TrimSpace(req.Model),
 		FastMode:       req.FastMode,
+		UltraFast:      req.UltraFast,
 		Effort:         req.Effort,
 		Task:           strings.TrimSpace(req.Task),
 		PermissionMode: mode,
@@ -358,6 +420,10 @@ func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
 		// Claude Code accepts a session id chosen by the caller.
 		rec.SessionID = newUUID()
 	}
+	rec.Branch = branch
+	if dir != proj.RepoPath {
+		rec.WorkDir = dir
+	}
 	m.agents[rec.ID] = rec
 	m.markAgentLocked(rec.ID)
 	m.changedLocked()
@@ -368,6 +434,21 @@ func (m *Manager) Launch(req LaunchRequest) (model.AgentSummary, error) {
 		}
 	}
 	return m.summaryLocked(rec), nil
+}
+
+// sharedWorkspace returns the folder and branch of an existing agent, for an agent that works alongside it.
+func (m *Manager) sharedWorkspace(agentID, repoPath string) (dir, branch string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.agents[agentID]
+	if !ok {
+		return "", "", ErrNotFound
+	}
+	dir = repoPath
+	if rec.WorkDir != "" {
+		dir = rec.WorkDir
+	}
+	return dir, rec.Branch, nil
 }
 
 // Send starts a new turn with the given message.
@@ -521,6 +602,35 @@ func (m *Manager) ProjectRepo(projectID string) (string, error) {
 	return proj.RepoPath, nil
 }
 
+// ListFiles returns the names in one directory of a project's repository. Directory
+// entries end with "/". Used by the chat @-mention autocomplete.
+func (m *Manager) ListFiles(projectID, relPath string) ([]string, error) {
+	m.mu.Lock()
+	proj, ok := m.projects[projectID]
+	m.mu.Unlock()
+	if !ok {
+		return nil, errors.New("choose a project first")
+	}
+	dir := proj.RepoPath
+	if relPath != "" {
+		dir = filepath.Join(dir, filepath.FromSlash(relPath))
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() {
+			name += "/"
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // Rename changes an agent's display name. The name is trimmed and must be 1 to 60 characters.
 func (m *Manager) Rename(agentID, name string) error {
 	name = strings.TrimSpace(name)
@@ -542,6 +652,24 @@ func (m *Manager) Rename(agentID, name string) error {
 	return nil
 }
 
+// Acknowledge clears a finished turn's "completed" mark once the user has looked at the agent.
+// Any other status is left alone: a running, failed or waiting agent keeps its state.
+func (m *Manager) Acknowledge(agentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.agents[agentID]
+	if !ok {
+		return ErrNotFound
+	}
+	if rec.Status != model.StatusCompleted {
+		return nil
+	}
+	m.setStatusLocked(rec, model.StatusIdle, "Ready for a task")
+	m.markAgentLocked(agentID)
+	m.changedLocked()
+	return nil
+}
+
 // SetPosition records where the user placed an agent in the universe.
 func (m *Manager) SetPosition(agentID string, x, y float64) error {
 	m.mu.Lock()
@@ -554,6 +682,134 @@ func (m *Manager) SetPosition(agentID string, x, y float64) error {
 	m.markAgentLocked(agentID)
 	m.changedLocked()
 	return nil
+}
+
+// SetModel changes the model an agent uses from its next message. The model must be one the provider
+// offers, and effort and fast mode must suit it. A reply already in progress keeps the settings it
+// started with, so this can be called mid-reply; the change applies from the next message.
+func (m *Manager) SetModel(agentID, modelID, effort string, fastMode, ultraFast bool) (model.AgentSummary, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.agents[agentID]
+	if !ok {
+		return model.AgentSummary{}, ErrNotFound
+	}
+	prov, ok := m.providers[rec.Provider]
+	if !ok {
+		return model.AgentSummary{}, fmt.Errorf("unknown provider %q", rec.Provider)
+	}
+	modelID = strings.TrimSpace(modelID)
+	caps := m.capsLocked(rec)
+	if modelID != "" && len(caps.Models) > 0 && !caps.HasModel(modelID) {
+		return model.AgentSummary{}, fmt.Errorf("%s does not offer the model %q", prov.Name(), modelID)
+	}
+	if effort != "" && !caps.SupportsEffort(modelID, effort) {
+		return model.AgentSummary{}, fmt.Errorf("%q thinking is not available for this model on %s", effort, prov.Name())
+	}
+	if ultraFast && !caps.SupportsUltraFast(modelID) {
+		return model.AgentSummary{}, fmt.Errorf("ultrafast mode is not available for this model on %s", prov.Name())
+	}
+	fastMode = fastMode || ultraFast
+	if fastMode && !caps.SupportsFastMode(modelID) {
+		return model.AgentSummary{}, fmt.Errorf("fast mode is not available for this model on %s", prov.Name())
+	}
+	rec.Model = modelID
+	rec.Effort = effort
+	rec.FastMode = fastMode
+	rec.UltraFast = ultraFast
+	m.markAgentLocked(agentID)
+	m.changedLocked()
+	return m.summaryLocked(rec), nil
+}
+
+// SetBranch moves an agent to another branch of its project's repository from its next message. The
+// branch is checked out as the agent's folder, a worktree when it is not the branch in the project
+// folder, as at launch. The agent starts a fresh session there, because a session belongs to the
+// folder it was made in. The transcript stays. An agent that is replying or in a talk cannot move
+// until that finishes.
+func (m *Manager) SetBranch(agentID, branch string) (model.AgentSummary, error) {
+	m.mu.Lock()
+	rec, ok := m.agents[agentID]
+	if !ok {
+		m.mu.Unlock()
+		return model.AgentSummary{}, ErrNotFound
+	}
+	proj, ok := m.projects[rec.ProjectID]
+	if !ok {
+		m.mu.Unlock()
+		return model.AgentSummary{}, errors.New("the agent's project no longer exists")
+	}
+	if err := m.checkBranchChangeLocked(agentID, rec); err != nil {
+		m.mu.Unlock()
+		return model.AgentSummary{}, err
+	}
+	m.mu.Unlock()
+
+	// Creating a worktree runs git, so it happens outside the lock, as at launch.
+	dir, branch, err := workspaceFor(proj, LaunchRequest{Branch: branch})
+	if err != nil {
+		return model.AgentSummary{}, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok = m.agents[agentID]
+	if !ok {
+		return model.AgentSummary{}, ErrNotFound
+	}
+	if err := m.checkBranchChangeLocked(agentID, rec); err != nil {
+		return model.AgentSummary{}, err
+	}
+	rec.Branch = branch
+	rec.WorkDir = ""
+	if dir != proj.RepoPath {
+		rec.WorkDir = dir
+	}
+	rec.SessionSeen = false
+	rec.SessionID = ""
+	if rec.Provider == "claude" {
+		// Claude Code takes a session id chosen by the caller, as at launch.
+		rec.SessionID = newUUID()
+	}
+	m.markAgentLocked(agentID)
+	m.changedLocked()
+	return m.summaryLocked(rec), nil
+}
+
+// checkBranchChangeLocked refuses a branch change while the agent is replying or in a talk.
+func (m *Manager) checkBranchChangeLocked(agentID string, rec *model.AgentRecord) error {
+	if rec.Running {
+		return errors.New("wait for the reply to finish before changing the branch")
+	}
+	if m.inConversationLocked(agentID) {
+		return errors.New("this agent is in a talk; end the talk before changing the branch")
+	}
+	return nil
+}
+
+// SetPermissionMode changes an agent's permission mode from its next message. The mode must be one
+// the provider offers. As with SetModel, a reply in progress keeps the mode it started with.
+func (m *Manager) SetPermissionMode(agentID, mode string) (model.AgentSummary, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.agents[agentID]
+	if !ok {
+		return model.AgentSummary{}, ErrNotFound
+	}
+	caps := m.capsLocked(rec)
+	offered := false
+	for _, p := range caps.PermissionModes {
+		if p.ID == mode {
+			offered = true
+		}
+	}
+	if !offered {
+		return model.AgentSummary{}, fmt.Errorf("%s does not offer the permission mode %q", m.providers[rec.Provider].Name(), mode)
+	}
+	rec.PermissionMode = mode
+	m.markAgentLocked(agentID)
+	m.changedLocked()
+	return m.summaryLocked(rec), nil
 }
 
 // ---- turn lifecycle -------------------------------------------------------
@@ -605,13 +861,14 @@ func (m *Manager) startTurnLocked(rec *model.AgentRecord, prompt string, images 
 
 	spec := provider.Spec{
 		AgentID:        rec.ID,
-		RepoPath:       proj.RepoPath,
+		RepoPath:       agentDirLocked(rec, proj),
 		Prompt:         sent,
 		SessionID:      rec.SessionID,
 		Resume:         rec.SessionSeen && rec.SessionID != "",
 		Model:          rec.Model,
 		PermissionMode: rec.PermissionMode,
 		FastMode:       rec.FastMode,
+		UltraFast:      rec.UltraFast,
 		Effort:         rec.Effort,
 		Images:         providerImages(images),
 		BrowserCommand: m.browserCmd,
@@ -671,7 +928,7 @@ func (m *Manager) maybeAutoCommitLocked(rec *model.AgentRecord, r *run) {
 	if len(paths) == 0 {
 		return
 	}
-	go m.autoCommit(rec.ID, proj.RepoPath, paths, autoCommitMessage(rec.Name, r.prompt))
+	go m.autoCommit(rec.ID, agentDirLocked(rec, proj), paths, autoCommitMessage(rec.Name, r.prompt))
 }
 
 // autoCommit commits the given paths and logs the outcome on the agent's activity.
@@ -1031,8 +1288,10 @@ func (m *Manager) summaryLocked(rec *model.AgentRecord) model.AgentSummary {
 		ProviderName:   rec.Provider,
 		Model:          rec.Model,
 		FastMode:       rec.FastMode,
+		UltraFast:      rec.UltraFast,
 		Effort:         rec.Effort,
 		Task:           rec.Task,
+		Branch:         rec.Branch,
 		PermissionMode: rec.PermissionMode,
 		Status:         rec.Status,
 		StatusDetail:   rec.StatusDetail,

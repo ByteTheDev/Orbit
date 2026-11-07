@@ -33,8 +33,8 @@ describe('projectStatus', () => {
 })
 
 describe('projectSummary', () => {
-  it('says so when a project has no agents', () => {
-    expect(projectSummary(project(), []).map((p) => p.text)).toEqual(['No agents'])
+  it('adds no label when a project has no agents', () => {
+    expect(projectSummary(project(), [])).toEqual([])
   })
 
   it('counts agents, singular and plural', () => {

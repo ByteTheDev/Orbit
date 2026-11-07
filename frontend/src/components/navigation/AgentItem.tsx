@@ -1,6 +1,6 @@
 import { STATUS_COLOR, STATUS_LABEL } from '../../lib/theme'
 import type { Status, AgentSummary } from '../../types'
-import { IconCheck, IconX, ProviderMark } from '../ui'
+import { IconCheck, IconX, MaterialIcon, ProviderMark } from '../ui'
 import { agentBucket, statusKind } from './agentStatus'
 
 interface Props {
@@ -39,44 +39,32 @@ export function AgentItem({ agent, selected, onSelect, onOpenMenu }: Props) {
             : undefined
         }
         className={`relative flex items-center rounded-md transition-colors duration-150 ${
-          selected ? 'bg-row-active' : 'hover:bg-row-hover'
+          selected ? 'bg-nav-active' : 'hover:bg-nav-hover'
         }`}
       >
-        {bucket === 'attention' && (
-          <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-0.5 rounded-full" style={{ background: color }} />
-        )}
         <button
           type="button"
           data-nav-item
           onClick={onSelect}
           aria-current={selected ? 'true' : undefined}
           title={tooltip}
-          className="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2.5 pr-1 text-left"
+          className="nav-item flex min-w-0 flex-1 items-center gap-2 py-0.5 pl-1.5 pr-1 text-left"
         >
-          <ProviderMark provider={agent.provider} size={18} />
+          <ProviderMark provider={agent.provider} size={16} />
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-baseline gap-1.5">
-              <span className={`min-w-0 truncate text-caption leading-tight ${selected ? 'font-semibold text-ink' : 'font-medium text-ink/90'}`}>
+              <span className={`min-w-0 truncate text-caption leading-tight ${selected ? 'font-semibold text-ink' : 'font-medium text-ink'}`}>
                 {agent.name}
               </span>
               {agent.model && <span className="shrink-0 truncate text-label leading-tight text-faint/90">{shortModel(agent.model)}</span>}
             </span>
             <span
-              className={`mt-0.5 block truncate text-label leading-snug ${failed || bucket === 'attention' ? '' : 'text-faint'}`}
+              className={`mt-px block truncate text-label leading-snug ${failed || bucket === 'attention' ? '' : 'text-muted'}`}
               style={failed || bucket === 'attention' ? { color } : undefined}
             >
               {detail}
             </span>
           </span>
-          {agent.issueCount > 0 && bucket !== 'attention' && (
-            <span
-              className="shrink-0 text-label tabular-nums text-warn-soft"
-              aria-label={`${agent.issueCount} issues logged`}
-              title={`${agent.issueCount} issue${agent.issueCount === 1 ? '' : 's'} logged since this agent started. A running total, not its current state.`}
-            >
-              !{agent.issueCount}
-            </span>
-          )}
           <StatusGlyph status={agent.status} running={agent.running} />
         </button>
 
@@ -89,13 +77,9 @@ export function AgentItem({ agent, selected, onSelect, onOpenMenu }: Props) {
             }}
             aria-label={`Actions for ${agent.name}`}
             aria-haspopup="menu"
-            className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-faint opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-row-active hover:text-ink focus-visible:opacity-100 group-hover/agent:opacity-100 group-focus-within/agent:opacity-100"
+            className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-faint opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-nav-active hover:text-ink focus-visible:opacity-100 group-hover/agent:opacity-100 group-focus-within/agent:opacity-100"
           >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <circle cx="5" cy="12" r="1.8" />
-              <circle cx="12" cy="12" r="1.8" />
-              <circle cx="19" cy="12" r="1.8" />
-            </svg>
+            <MaterialIcon name="more_horiz" size={11} />
           </button>
         )}
 
@@ -136,7 +120,7 @@ export function StatusGlyph({ status, running }: { status: Status; running: bool
       {kind === 'live' && (
         <span
           className={`h-1.5 w-1.5 rounded-full ${running ? 'animate-pulse motion-reduce:animate-none' : ''}`}
-          style={{ background: color, boxShadow: running ? `0 0 8px 0 ${color}` : undefined }}
+          style={{ background: color }}
         />
       )}
       {kind === 'done' && <IconCheck size={11} />}

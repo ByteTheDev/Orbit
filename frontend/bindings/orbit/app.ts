@@ -28,6 +28,13 @@ import * as model$0 from "./internal/model/models.js";
 import * as $models from "./models.js";
 
 /**
+ * AcknowledgeAgent clears the completed mark on an agent the user has opened.
+ */
+export function AcknowledgeAgent(agentID: string): $CancellablePromise<void> {
+    return $Call.ByID(648515480, agentID);
+}
+
+/**
  * AttachmentImage returns a chat image as a data URL.
  */
 export function AttachmentImage(agentID: string, attachmentID: string): $CancellablePromise<string> {
@@ -138,10 +145,25 @@ export function CloseTerminal(terminalID: string): $CancellablePromise<void> {
 }
 
 /**
+ * Collaborate makes two agents work together on a shared task.
+ */
+export function Collaborate(aID: string, bID: string, task: string, maxReplies: number): $CancellablePromise<model$0.Conversation> {
+    return $Call.ByID(1783291687, aID, bID, task, maxReplies);
+}
+
+/**
  * CommitChanges commits paths (or the whole index when paths is empty) and returns the short hash.
  */
 export function CommitChanges(projectID: string, message: string, paths: string[] | null): $CancellablePromise<string> {
     return $Call.ByID(765796357, projectID, message, paths);
+}
+
+/**
+ * Communicate makes two agents in one project work together on a task, passing each reply to
+ * the other until the task is finished or the reply limit is reached.
+ */
+export function Communicate(aID: string, bID: string, topic: string, maxReplies: number): $CancellablePromise<model$0.Conversation> {
+    return $Call.ByID(3133949326, aID, bID, topic, maxReplies);
 }
 
 /**
@@ -159,10 +181,24 @@ export function DelegateTask(fromID: string, toID: string, task: string): $Cance
 }
 
 /**
+ * DeleteAutomation removes an automation. Agents it already launched stay.
+ */
+export function DeleteAutomation(id: string): $CancellablePromise<void> {
+    return $Call.ByID(551910605, id);
+}
+
+/**
  * DeleteProject stops and removes a project and its agents.
  */
 export function DeleteProject(projectID: string): $CancellablePromise<void> {
     return $Call.ByID(3379369923, projectID);
+}
+
+/**
+ * DeleteSSHProfile removes a saved SSH connection.
+ */
+export function DeleteSSHProfile(id: string): $CancellablePromise<void> {
+    return $Call.ByID(213402669, id);
 }
 
 /**
@@ -230,6 +266,35 @@ export function LaunchAgent(req: agent$0.LaunchRequest): $CancellablePromise<mod
 }
 
 /**
+ * LaunchPair creates two agents in one project (first opens) and starts them working together on task.
+ */
+export function LaunchPair(first: agent$0.LaunchRequest, partner: agent$0.LaunchRequest, task: string, maxReplies: number): $CancellablePromise<model$0.Conversation> {
+    return $Call.ByID(3823009710, first, partner, task, maxReplies);
+}
+
+/**
+ * LaunchTeam creates the first agent and its partners in one project and starts them working together on task.
+ */
+export function LaunchTeam(first: agent$0.LaunchRequest, partners: agent$0.LaunchRequest[] | null, task: string, maxReplies: number): $CancellablePromise<model$0.Conversation> {
+    return $Call.ByID(3760425175, first, partners, task, maxReplies);
+}
+
+/**
+ * ListProjectFiles lists the entries in one directory of a project's repository.
+ * Used by the chat @-mention autocomplete.
+ */
+export function ListProjectFiles(projectID: string, relPath: string): $CancellablePromise<string[] | null> {
+    return $Call.ByID(2674437909, projectID, relPath);
+}
+
+/**
+ * ListSSHProfiles returns the saved SSH connections, oldest first.
+ */
+export function ListSSHProfiles(): $CancellablePromise<model$0.SSHProfile[] | null> {
+    return $Call.ByID(314764623);
+}
+
+/**
  * OpenTerminal starts a shell in a project's repository folder. The window picks the id so it
  * can listen for output before the shell prints anything.
  */
@@ -242,6 +307,20 @@ export function OpenTerminal(terminalID: string, projectID: string, cols: number
  */
 export function PickRepository(): $CancellablePromise<string> {
     return $Call.ByID(643437460);
+}
+
+/**
+ * ProjectBranches lists a project's git branches for the launch dialog.
+ */
+export function ProjectBranches(projectID: string): $CancellablePromise<model$0.BranchInfo> {
+    return $Call.ByID(519432478, projectID);
+}
+
+/**
+ * Relay hands a message from one agent to another and asks the receiver to act on it.
+ */
+export function Relay(fromID: string, toID: string, message: string): $CancellablePromise<model$0.Handoff> {
+    return $Call.ByID(3045852026, fromID, toID, message);
 }
 
 /**
@@ -273,10 +352,59 @@ export function ResumeAgent(agentID: string): $CancellablePromise<void> {
 }
 
 /**
+ * RunAutomation starts the automation's agent now, outside its schedule.
+ */
+export function RunAutomation(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2023417661, id);
+}
+
+/**
+ * RunSSHCommand runs command on a saved connection and returns its output.
+ */
+export function RunSSHCommand(id: string, command: string): $CancellablePromise<string> {
+    return $Call.ByID(3237562993, id, command);
+}
+
+/**
+ * SaveAutomation creates an automation, or updates the one whose ID is set.
+ */
+export function SaveAutomation(auto: model$0.Automation): $CancellablePromise<void> {
+    return $Call.ByID(1033157023, auto);
+}
+
+/**
+ * SaveSSHProfile creates or updates an SSH connection. It returns the stored profile.
+ */
+export function SaveSSHProfile(p: model$0.SSHProfile): $CancellablePromise<model$0.SSHProfile> {
+    return $Call.ByID(2695593311, p);
+}
+
+/**
  * SendMessage sends a message with optional images, starting a new turn.
  */
 export function SendMessage(agentID: string, text: string, images: model$0.ImageUpload[] | null): $CancellablePromise<void> {
     return $Call.ByID(1496882310, agentID, text, images);
+}
+
+/**
+ * SetAgentBranch moves an agent to another branch of its project's repository from its next message.
+ */
+export function SetAgentBranch(agentID: string, branch: string): $CancellablePromise<model$0.AgentSummary> {
+    return $Call.ByID(3772694552, agentID, branch);
+}
+
+/**
+ * SetAgentModel changes the model, thinking effort, fast mode and ultrafast mode an agent uses from its next turn.
+ */
+export function SetAgentModel(agentID: string, modelID: string, effort: string, fastMode: boolean, ultraFast: boolean): $CancellablePromise<model$0.AgentSummary> {
+    return $Call.ByID(226370453, agentID, modelID, effort, fastMode, ultraFast);
+}
+
+/**
+ * SetAgentPermission changes an agent's permission mode from its next message.
+ */
+export function SetAgentPermission(agentID: string, mode: string): $CancellablePromise<model$0.AgentSummary> {
+    return $Call.ByID(279339455, agentID, mode);
 }
 
 /**
@@ -323,6 +451,13 @@ export function StartConversation(aID: string, bID: string, topic: string, maxRe
 }
 
 /**
+ * StartTeam makes the given agents (in speaking order) work together on topic.
+ */
+export function StartTeam(agentIDs: string[] | null, topic: string, maxReplies: number): $CancellablePromise<model$0.Conversation> {
+    return $Call.ByID(603629318, agentIDs, topic, maxReplies);
+}
+
+/**
  * StopAgent cancels the running turn.
  */
 export function StopAgent(agentID: string): $CancellablePromise<void> {
@@ -334,6 +469,13 @@ export function StopAgent(agentID: string): $CancellablePromise<void> {
  */
 export function StopConversation(id: string): $CancellablePromise<void> {
     return $Call.ByID(2630667022, id);
+}
+
+/**
+ * TestSSHProfile opens the saved connection and runs a trivial command.
+ */
+export function TestSSHProfile(id: string): $CancellablePromise<void> {
+    return $Call.ByID(555679498, id);
 }
 
 /**

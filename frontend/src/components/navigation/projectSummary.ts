@@ -40,12 +40,10 @@ export function projectSummary(project: ProjectSummary, agents: AgentSummary[], 
   if (project.conflicts.length > 0) parts.push({ text: plural(project.conflicts.length, 'conflict'), tone: 'warn' })
   const running = agents.filter((a) => a.running).length
   if (running > 0) parts.push({ text: `${running} running`, tone: 'live' })
-  if (agents.length === 0) {
-    parts.push({ text: 'No agents', tone: 'muted' })
-  } else if (shown !== agents.length) {
-    parts.push({ text: `${shown} of ${plural(agents.length, 'agent')}`, tone: 'muted' })
-  } else {
-    parts.push({ text: plural(agents.length, 'agent'), tone: 'muted' })
+  // A project with no agents gets no count: its expanded list offers the one launch action instead.
+  if (agents.length > 0) {
+    const count = shown !== agents.length ? `${shown} of ${plural(agents.length, 'agent')}` : plural(agents.length, 'agent')
+    parts.push({ text: count, tone: 'muted' })
   }
   return parts
 }

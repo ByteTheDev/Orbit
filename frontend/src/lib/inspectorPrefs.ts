@@ -2,8 +2,9 @@
 // so the clamping and the storage fallback can be tested without a browser.
 
 export const INSPECTOR_MIN = 320
-export const INSPECTOR_MAX = 720
-export const INSPECTOR_DEFAULT = 400
+/** The "expanded" width. The widest the chat panel goes beside the galaxy; full-width chat is focus mode. */
+export const INSPECTOR_MAX = 600
+export const INSPECTOR_DEFAULT = 420
 
 const KEY = 'orbit.inspector'
 
@@ -11,6 +12,11 @@ const KEY = 'orbit.inspector'
 export function clampInspectorWidth(width: number): number {
   if (!Number.isFinite(width)) return INSPECTOR_DEFAULT
   return Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, Math.round(width)))
+}
+
+/** The expand button: a panel at or near the maximum collapses to the default, anything narrower expands to the maximum. */
+export function toggleInspectorWidth(width: number): number {
+  return width >= INSPECTOR_MAX - 8 ? INSPECTOR_DEFAULT : INSPECTOR_MAX
 }
 
 type KeyValueStore = Pick<Storage, 'getItem' | 'setItem'>

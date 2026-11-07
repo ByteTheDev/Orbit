@@ -5,6 +5,8 @@ package provider
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"orbit/internal/model"
 )
@@ -20,6 +22,9 @@ type Spec struct {
 	PermissionMode string
 	// FastMode asks the provider to run this turn in fast mode. Only set for models that support it.
 	FastMode bool
+	// UltraFast asks for the account's ultrafast tier on this turn. It implies FastMode. Only set for
+	// models whose account offers it.
+	UltraFast bool
 	// Effort is the thinking effort level for this turn. Empty means the CLI default.
 	Effort string
 	// Images are files attached to this turn's prompt. Adapters read them as they need.
@@ -27,6 +32,8 @@ type Spec struct {
 	// BrowserCommand is the Orbit executable that serves the browser tool over MCP. Empty
 	// leaves the browser out of this turn.
 	BrowserCommand string
+	// Env is extra environment variables for the process, in KEY=VALUE form.
+	Env []string
 }
 
 // browserServerName is the MCP server name the browser is registered under.
@@ -131,8 +138,26 @@ func Registry() map[string]Provider {
 	return out
 }
 
-// Infos describes every registered provider, in display order.
+// infosCache keeps the (slow) provider detection from running on every GetSnapshot. Detection
+// results are refreshed at most every few minutes, or when force is needed.
+var (
+	infosMu    sync.Mutex
+	infosAt    time.Time
+	infosCache []Info
+)
+
+const infosTTL = 2 * time.Minute
+
+// Infos describes every registered provider, in display order. Detection is cached briefly so
+// repeated calls (and the window's initial snapshot) stay fast.
 func Infos() []Info {
+	infosMu.Lock()
+	defer infosMu.Unlock()
+	if infosCache != nil && time.Since(infosAt) < infosTTL {
+		out := make([]Info, len(infosCache))
+		copy(out, infosCache)
+		return out
+	}
 	order := []Provider{Claude{}, Codex{}, OMP{}, OpenCode{}, Fx{}, Pi{}}
 	out := make([]Info, 0, len(order))
 	for _, p := range order {
@@ -146,5 +171,15 @@ func Infos() []Info {
 			Capabilities: p.Capabilities(),
 		})
 	}
+	infosCache = out
+	infosAt = time.Now()
 	return out
+}
+
+// ResetInfosCache clears the cached provider detection, so the next Infos() call re-probes.
+func ResetInfosCache() {
+	infosMu.Lock()
+	defer infosMu.Unlock()
+	infosCache = nil
+	infosAt = time.Time{}
 }

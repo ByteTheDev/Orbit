@@ -40,13 +40,17 @@ interface Props {
   project: { id: string; icon?: string; iconRev?: number }
   /** Tile edge in CSS pixels. Glyphs and letters scale with it. */
   size?: number
+  /**
+   * What to draw when the project has no icon or letter. 'none' draws nothing, so the name stands
+   * alone. 'dot' draws the project's accent as a small dot in the same box, so names stay in one column.
+   */
+  fallback?: 'none' | 'dot'
 }
 
 /**
- * A project's mark: its uploaded icon, or its custom letter. Renders nothing otherwise, so the
- * name stands alone. Decorative: the row it sits in carries the name.
+ * A project's mark: its uploaded icon, or its custom letter. Decorative: the row it sits in carries the name.
  */
-export function ProjectMark({ project, size = 28 }: Props) {
+export function ProjectMark({ project, size = 28, fallback = 'none' }: Props) {
   const identity = identityFor(project.id)
   const uploaded = useUploadedIcon(project.id, project.iconRev ?? 0)
   const tile = {
@@ -54,7 +58,6 @@ export function ProjectMark({ project, size = 28 }: Props) {
     height: size,
     borderRadius: Math.round(size * 0.3),
     background: `${identity.accent}1a`,
-    boxShadow: `inset 0 0 0 1px ${identity.accent}33`,
   }
 
   if (uploaded) {
@@ -78,6 +81,11 @@ export function ProjectMark({ project, size = 28 }: Props) {
     )
   }
 
-  // No generated fallback: a project with no uploaded icon or letter shows only its name.
-  return null
+  if (fallback === 'none') return null
+  // The accent, small and centred in the same box as a tile, so every row starts its name at one x.
+  return (
+    <span className="inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }} aria-hidden="true">
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: identity.accent }} />
+    </span>
+  )
 }

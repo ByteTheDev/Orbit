@@ -6,10 +6,15 @@ import {
   applySettings,
   cssVarsFor,
   hexToRgbTriplet,
+  isValidColour,
+  loadCustomThemes,
   loadSettings,
   normaliseSettings,
+  parseThemeFile,
   resolveReducedMotion,
+  saveCustomThemes,
   saveSettings,
+  type ThemeInfo,
 } from './settings'
 
 function memory(initial?: string) {
@@ -107,6 +112,12 @@ describe('cssVarsFor', () => {
     expect(cssVarsFor(DEFAULT_SETTINGS)['--ui-font-size']).toBe('13px')
   })
 
+  it('sets the type scale factor so the text tokens resize with the setting', () => {
+    expect(cssVarsFor(DEFAULT_SETTINGS)['--text-scale']).toBe('1')
+    expect(Number(cssVarsFor({ ...DEFAULT_SETTINGS, textSize: 'xlarge' })['--text-scale'])).toBeCloseTo(15 / 13)
+    expect(Number(cssVarsFor({ ...DEFAULT_SETTINGS, textSize: 'small' })['--text-scale'])).toBeCloseTo(12 / 13)
+  })
+
   it('never touches status or provider colours', () => {
     const keys = Object.keys(cssVarsFor({ ...DEFAULT_SETTINGS, theme: 'contrast', accent: 'rose' }))
     expect(keys.some((k) => k.includes('status') || k.includes('claude') || k.includes('codex'))).toBe(false)
@@ -122,6 +133,113 @@ describe('hexToRgbTriplet', () => {
 
   it('has a valid triplet for every accent', () => {
     for (const a of ACCENTS) expect(hexToRgbTriplet(a.color)).not.toBeNull()
+  })
+})
+
+describe('built-in themes', () => {
+  it('have unique ids and only valid colours', () => {
+    const ids = THEMES.map((t) => t.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const t of THEMES) {
+      expect(t.id.startsWith('custom-')).toBe(false)
+      for (const value of Object.values(t.palette)) expect(isValidColour(value)).toBe(true)
+    }
+  })
+
+  it('has a good number of choices', () => {
+    expect(THEMES.length).toBeGreaterThanOrEqual(20)
+  })
+})
+
+describe('parseThemeFile', () => {
+  const good = JSON.stringify({ name: 'Ocean', palette: { canvas: '#041018', ink: '#e6f4ff' } })
+
+  it('builds a theme from a minimal file, filling the rest from Orbit', () => {
+    const r = parseThemeFile(good, 255)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.theme.name).toBe('Ocean')
+    expect(r.theme.blurb).toBe('Custom theme')
+    expect(r.theme.id.startsWith('custom-ocean-')).toBe(true)
+    expect(r.theme.palette.canvas).toBe('#041018')
+    expect(r.theme.palette.ink).toBe('#e6f4ff')
+    expect(r.theme.palette.sidebar).toBe(THEMES[0].palette.sidebar)
+  })
+
+  it('starts from a named base theme', () => {
+    const r = parseThemeFile(JSON.stringify({ name: 'X', base: 'nord', palette: { ink: '#ffffff' } }))
+    if (!r.ok) throw new Error(r.error)
+    expect(r.theme.palette.surface).toBe(THEMES.find((t) => t.id === 'nord')!.palette.surface)
+  })
+
+  it('derives the dividers from a changed border', () => {
+    const r = parseThemeFile(JSON.stringify({ name: 'X', palette: { border: '#ff8000' } }))
+    if (!r.ok) throw new Error(r.error)
+    expect(r.theme.palette.line).toBe('rgb(255 128 0 / 0.6)')
+    expect(r.theme.palette.lineStrong).toBe('rgb(255 128 0 / 0.9)')
+  })
+
+  it('rejects bad input with a message the user can act on', () => {
+    const cases: [string, RegExp][] = [
+      ['{not json', /not valid JSON/],
+      ['[]', /JSON object/],
+      [JSON.stringify({ palette: { canvas: '#000' } }), /"name"/],
+      [JSON.stringify({ name: 'x'.repeat(41), palette: {} }), /40 characters/],
+      [JSON.stringify({ name: 'X' }), /"palette" object/],
+      [JSON.stringify({ name: 'X', base: 'neon', palette: {} }), /"base"/],
+      [JSON.stringify({ name: 'X', palette: { suface: '#000' } }), /Unknown colour "suface"/],
+      [JSON.stringify({ name: 'X', palette: { canvas: 'red' } }), /"canvas" must be a colour/],
+      [JSON.stringify({ name: 'X', palette: { canvas: 'url(javascript:alert(1))' } }), /"canvas" must be a colour/],
+    ]
+    for (const [text, message] of cases) {
+      const r = parseThemeFile(text)
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error).toMatch(message)
+    }
+  })
+
+  it('accepts hex with alpha and rgb()/rgba()', () => {
+    expect(isValidColour('#1e1e2e80')).toBe(true)
+    expect(isValidColour('rgba(30, 30, 46, 0.5)')).toBe(true)
+    expect(isValidColour('rgb(30 30 46 / 50%)')).toBe(true)
+    expect(isValidColour('#12')).toBe(false)
+    expect(isValidColour('hsl(0 0% 0%)')).toBe(false)
+  })
+})
+
+describe('custom theme storage', () => {
+  const good = JSON.stringify({ name: 'Ocean', palette: { canvas: '#041018' } })
+  // A fixed clock, so the generated id is the same on every call.
+  const sample = (): ThemeInfo => {
+    const r = parseThemeFile(good, 255)
+    if (!r.ok) throw new Error(r.error)
+    return r.theme
+  }
+
+  it('round-trips imported themes', () => {
+    const store = memory()
+    saveCustomThemes([sample()], store)
+    expect(loadCustomThemes(store)).toEqual([sample()])
+  })
+
+  it('drops malformed entries instead of failing', () => {
+    const store = memory()
+    store.setItem('orbit.customThemes', JSON.stringify([{ id: 'custom-a' }, 'nope', sample()]))
+    expect(loadCustomThemes(store)).toEqual([sample()])
+    store.setItem('orbit.customThemes', '{oops')
+    expect(loadCustomThemes(store)).toEqual([])
+  })
+
+  it('accepts a custom theme id in settings only while that theme exists', () => {
+    const id = sample().id
+    expect(normaliseSettings({ theme: id }).theme).toBe('orbit')
+    expect(normaliseSettings({ theme: id }, [id]).theme).toBe(id)
+  })
+
+  it('uses an imported theme’s colours in the CSS', () => {
+    const t = sample()
+    expect(cssVarsFor({ ...DEFAULT_SETTINGS, theme: t.id }, [t])['--color-canvas']).toBe('#041018')
+    expect(cssVarsFor({ ...DEFAULT_SETTINGS, theme: t.id }, [])['--color-canvas']).toBe(THEMES[0].palette.canvas)
   })
 })
 

@@ -5,13 +5,16 @@ import { Dialogs } from './components/dialogs/Dialogs'
 import { Inspector } from './components/inspector/Inspector'
 import { UsageBar } from './components/UsageBar'
 import { ProjectsPanel } from './components/ProjectsPanel'
+import { SIDEBAR_RAIL } from './lib/sidebarPrefs'
 import { Toasts } from './components/Toasts'
+import { StartupScreen } from './components/StartupScreen'
 import { TopBar } from './components/TopBar'
 import { Universe, type UniverseHandle } from './components/universe/Universe'
-import { Button, EmptyState, IconChat, IconFit, IconInspect, IconMinus, IconPencil, IconPlay, IconPlus, IconResume, IconStop, IconTarget, IconTrash, Kbd, Spinner, floatingSurface } from './components/ui'
+import { Button, EmptyState, IconChat, IconFit, IconInspect, IconMinus, IconPencil, IconPlay, IconPlus, IconResume, IconStop, IconTarget, IconTrash, Kbd, floatingSurface } from './components/ui'
 import { moveAgent, resumeAgent, stopAgent } from './lib/actions'
-import { api, errorText, onEvents } from './lib/bridge'
+import { api, errorText, onAutomations, onEvents } from './lib/bridge'
 import { TAB_KEYS } from './lib/shortcuts'
+import { isLightPalette, themeFor } from './lib/settings'
 import {
   applyEvents,
   applySnapshot,
@@ -19,6 +22,8 @@ import {
   getState,
   openDialog,
   selectAgent,
+  setAutomations,
+  setFocusMode,
   setInspectorTab,
   setState,
   setSystemReducedMotion,
@@ -39,10 +44,22 @@ export default function App() {
   const connectError = useStore((s) => s.connectError)
   const storageError = useStore((s) => s.storageError)
   const projectsOpen = useStore((s) => s.projectsOpen)
+  const sidebarWidth = useStore((s) => s.sidebarWidth)
+  const sidebarCollapsed = useStore((s) => s.sidebarCollapsed)
   const dashboardOpen = useStore((s) => s.dashboardOpen)
   const selectedId = useStore((s) => s.selectedId)
   const reducedMotion = useStore((s) => s.reducedMotion)
+  // The active theme's id when it is light, otherwise 'dark'. The galaxy is keyed by it, so it remounts on a light/dark switch.
+  const universeTheme = useStore((s) => {
+    const theme = themeFor(s.settings, s.customThemes)
+    return isLightPalette(theme.palette) ? theme.id : 'dark'
+  })
   const focus = useStore((s) => s.focus)
+  const inspectorOpen = useStore((s) => s.inspectorOpen)
+  const focusMode = useStore((s) => s.focusMode)
+  const galaxyBesideChat = useStore((s) => s.galaxyBesideChat)
+  // The conversation fills the main area only while the inspector is open in focus mode, so closing it never leaves a blank screen.
+  const chatMaximized = focusMode && inspectorOpen && !galaxyBesideChat
   const activeProjectId = useStore((s) => s.activeProjectId)
   const projectsMap = useStore((s) => s.projects)
   const projectOrder = useStore((s) => s.projectOrder)
@@ -57,12 +74,19 @@ export default function App() {
 
   useEffect(() => {
     const off = onEvents((batch) => applyEvents(batch as OrbitEvent[]))
+    const offAutomations = onAutomations((list) => setAutomations(list))
     let cancelled = false
     setState({ loading: true, connectError: null })
-    api
-      .getSnapshot()
+    // Guard against a backend that never answers (a hung dev server, a stale
+    // Vite process, or a backend that crashed mid-startup). Without this the
+    // app stays on the "Starting Orbit…" startup screen indefinitely.
+    const snapshot = api.getSnapshot()
+    const timeout = new Promise<never>((_, reject) =>
+      window.setTimeout(() => reject(new Error('Orbit’s backend did not respond. Try again, or restart `wails dev`.')), 15000),
+    )
+    Promise.race([snapshot, timeout])
       .then((snap) => {
-        if (!cancelled) applySnapshot(snap)
+        if (!cancelled) applySnapshot(snap as Parameters<typeof applySnapshot>[0])
       })
       .catch((err) => {
         if (!cancelled) setState({ loading: false, connected: false, connectError: errorText(err) })
@@ -70,6 +94,7 @@ export default function App() {
     return () => {
       cancelled = true
       off()
+      offAutomations()
     }
   }, [attempt])
 
@@ -101,7 +126,11 @@ export default function App() {
           e.preventDefault()
           return
         }
-        if (s.inspectorOpen) {
+        if (s.inspectorOpen && s.focusMode) {
+          // Esc first leaves focus mode, so the galaxy comes back before the conversation closes.
+          setFocusMode(false)
+          e.preventDefault()
+        } else if (s.inspectorOpen) {
           selectAgent(null)
           e.preventDefault()
         } else if (universeRef.current?.returnToGalaxy()) {
@@ -211,11 +240,7 @@ export default function App() {
   // ---- render --------------------------------------------------------------------------
 
   if (loading && !connected) {
-    return (
-      <div className="flex h-full items-center justify-center bg-canvas">
-        <Spinner label="Starting Orbit…" />
-      </div>
-    )
+    return <StartupScreen />
   }
 
   if (!connected && connectError) {
@@ -288,6 +313,9 @@ export default function App() {
       ]
     : []
 
+  // Width the sidebar takes on the left: nothing when hidden, the rail when collapsed.
+  const sidebarSpan = projectsOpen ? (sidebarCollapsed ? SIDEBAR_RAIL : sidebarWidth) : 0
+
   return (
     <div className="flex h-full flex-col bg-canvas text-ink">
       <TopBar />
@@ -309,14 +337,29 @@ export default function App() {
           />
         )}
 
-        <main className="relative min-w-0 flex-1" aria-label="Universe">
+        {/*
+          The galaxy starts under the sidebar, so a translucent sidebar shows the nebula behind it.
+          The sidebar is stacked above it (z-10 in ProjectsPanel) and takes the clicks there.
+          In focus mode the galaxy is hidden, not unmounted: its WebGL state and camera survive the round trip.
+        */}
+        <main
+          className={`relative min-w-0 flex-1 ${chatMaximized ? 'hidden' : ''}`}
+          style={{ marginLeft: -sidebarSpan }}
+          aria-label="Universe"
+        >
           <Universe
+            key={universeTheme}
             ref={universeRef}
             projects={projectList}
             agents={agentList}
             selectedId={selectedId}
             reducedMotion={reducedMotion}
+            lightTheme={universeTheme !== 'dark'}
             onSelectAgent={(id) => selectAgent(id, { openInspector: true })}
+            onEnterFocus={(id) => {
+              selectAgent(id, { openInspector: true })
+              setFocusMode(true)
+            }}
             onSelectProject={(id) => setState({ activeProjectId: id })}
             onOpenMenu={openMenu}
             onOpenProjectMenu={openProjectMenu}
@@ -407,9 +450,9 @@ const TerminalPanel = lazy(() => import('./components/terminal/TerminalPanel').t
 function OrbitIllustration() {
   return (
     <svg width="72" height="72" viewBox="0 0 72 72" aria-hidden="true" fill="none">
-      <ellipse cx="36" cy="36" rx="32" ry="12" stroke="rgba(244,244,245,0.16)" strokeWidth="1" strokeDasharray="2 4" transform="rotate(-18 36 36)" />
-      <ellipse cx="36" cy="36" rx="20" ry="7.5" stroke="rgba(244,244,245,0.1)" strokeWidth="1" transform="rotate(-18 36 36)" />
-      <circle cx="36" cy="36" r="8" fill="rgba(244,244,245,0.1)" />
+      <ellipse cx="36" cy="36" rx="32" ry="12" strokeWidth="1" strokeDasharray="2 4" transform="rotate(-18 36 36)" style={{ stroke: 'var(--color-ink)', strokeOpacity: 0.16 }} />
+      <ellipse cx="36" cy="36" rx="20" ry="7.5" strokeWidth="1" transform="rotate(-18 36 36)" style={{ stroke: 'var(--color-ink)', strokeOpacity: 0.1 }} />
+      <circle cx="36" cy="36" r="8" style={{ fill: 'var(--color-ink)', fillOpacity: 0.1 }} />
       <circle cx="58" cy="25" r="3.2" style={{ fill: 'var(--color-claude)' }} />
     </svg>
   )

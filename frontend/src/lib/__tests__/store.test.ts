@@ -9,7 +9,7 @@ const project: ProjectSummary = {
 function agent(overrides: Partial<AgentSummary> = {}): AgentSummary {
   return {
     id: 'a1', projectId: 'p1', name: 'Alpha', provider: 'claude', providerName: 'Claude Code',
-    model: '', task: '', permissionMode: '', status: 'idle', statusDetail: '', sessionId: '', running: false, fastMode: false, effort: '',
+    model: '', task: '', permissionMode: '', status: 'idle', statusDetail: '', sessionId: '', running: false, fastMode: false, ultraFast: false, effort: '',
     createdAt: 2, updatedAt: 2, runStartedAt: 0, turns: 0, toolCalls: 0,
     usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0 }, lastError: '',
     fileCount: 0, writeCount: 0, issueCount: 0, recentFiles: [], recentTools: [], subAgents: [],
@@ -20,7 +20,7 @@ function agent(overrides: Partial<AgentSummary> = {}): AgentSummary {
 
 function reset() {
   setState({ projects: {}, projectOrder: [], agents: {}, agentOrder: [], details: {}, selectedId: null, activeProjectId: null })
-  applySnapshot({ projects: [], agents: [], providers: [], statePath: '', storageError: '', version: '' })
+  applySnapshot({ projects: [], agents: [], automations: [], providers: [], statePath: '', storageError: '', version: '' })
 }
 
 describe('applyEvents', () => {

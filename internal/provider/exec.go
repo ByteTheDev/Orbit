@@ -22,6 +22,7 @@ type procSpec struct {
 	Args  []string
 	Dir   string
 	Stdin string
+	Env   []string
 }
 
 // lineParser turns one stdout line into zero or more updates.
@@ -62,6 +63,9 @@ func runProcess(ctx context.Context, ps procSpec, parse lineParser, emit func(Up
 	cmd := exec.CommandContext(ctx, ps.Bin, ps.Args...)
 	cmd.Dir = ps.Dir
 	cmd.Stdin = strings.NewReader(ps.Stdin)
+	if len(ps.Env) > 0 {
+		cmd.Env = append(os.Environ(), ps.Env...)
+	}
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Cancel = func() error { return killTree(cmd.Process) }
 	configureProcess(cmd)

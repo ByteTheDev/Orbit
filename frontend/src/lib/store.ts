@@ -3,17 +3,22 @@
 import { useSyncExternalStore } from 'react'
 import { clampSidebarWidth, loadSidebarPrefs, saveSidebarPrefs } from './sidebarPrefs'
 import {
+  MAX_CUSTOM_THEMES,
   TOAST_MS,
   applySettings,
+  loadCustomThemes,
   loadSettings,
   normaliseSettings,
   resolveReducedMotion,
+  saveCustomThemes,
   saveSettings,
   type Settings,
+  type ThemeInfo,
 } from './settings'
 import type {
   ActivityEntry,
   AgentSummary,
+  Automation,
   FileActivity,
   Issue,
   Message,
@@ -31,11 +36,12 @@ export type Dialog =
   | { kind: 'project' }
   | { kind: 'launch'; projectId?: string }
   | { kind: 'file'; agentId: string; path: string }
-  | { kind: 'settings'; section?: 'keyboard' }
+  | { kind: 'settings'; section?: 'keyboard' | 'ssh' }
   | { kind: 'remove'; agentId: string }
   | { kind: 'deleteProject'; projectId: string }
   | { kind: 'projectIcon'; projectId: string }
   | { kind: 'browser'; url?: string }
+  | { kind: 'automations' }
   | null
 
 export interface Toast {
@@ -67,12 +73,18 @@ export interface State {
   projectOrder: string[]
   agents: Record<string, AgentSummary>
   agentOrder: string[]
+  /** Scheduled launches, oldest first. The backend sends the full list whenever it changes. */
+  automations: Automation[]
   details: Record<string, Details>
   /** Why an agent's history failed to load. Cleared when a load succeeds. */
   detailErrors: Record<string, string>
   selectedId: string | null
   inspectorOpen: boolean
   inspectorTab: InspectorTab
+  /** Full-width conversation: the chat takes the whole main area and the galaxy is hidden until toggled back. */
+  focusMode: boolean
+  /** In focus mode, whether the galaxy is shown beside the chat. Ignored outside focus mode. */
+  galaxyBesideChat: boolean
   projectsOpen: boolean
   /** Sidebar width in px, within SIDEBAR_MIN..SIDEBAR_MAX. Persisted by setSidebar. */
   sidebarWidth: number
@@ -88,6 +100,8 @@ export interface State {
   reducedMotion: boolean
   /** User preferences. Persisted by setSettings and applied to the document. */
   settings: Settings
+  /** Themes the user has imported. Built-in themes live in settings.ts. */
+  customThemes: ThemeInfo[]
 }
 
 const MAX_ACTIVITY = 500
@@ -109,11 +123,14 @@ const initial: State = {
   projectOrder: [],
   agents: {},
   agentOrder: [],
+  automations: [],
   details: {},
   detailErrors: {},
   selectedId: null,
   inspectorOpen: false,
   inspectorTab: 'overview',
+  focusMode: false,
+  galaxyBesideChat: false,
   limits: [],
   projectsOpen: true,
   sidebarWidth: loadSidebarPrefs().width,
@@ -125,13 +142,14 @@ const initial: State = {
   toasts: [],
   reducedMotion: false,
   settings: loadSettings(),
+  customThemes: loadCustomThemes(),
 }
 
 // The OS reduced-motion preference, kept apart so a Settings choice can override it and then be undone.
 let systemReducedMotion =
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 initial.reducedMotion = resolveReducedMotion(initial.settings.motion, systemReducedMotion)
-applySettings(initial.settings, initial.reducedMotion)
+applySettings(initial.settings, initial.reducedMotion, undefined, initial.customThemes)
 
 let state: State = initial
 const listeners = new Set<() => void>()
@@ -179,9 +197,15 @@ export function applySnapshot(snap: Snapshot): void {
     projectOrder: sortedIds(projects),
     agents,
     agentOrder: sortedIds(agents),
+    automations: list(snap.automations),
     activeProjectId: s.activeProjectId && projects[s.activeProjectId] ? s.activeProjectId : (snap.projects[0]?.id ?? null),
     selectedId: s.selectedId && agents[s.selectedId] ? s.selectedId : null,
   }))
+}
+
+/** Replaces the automation list with the one the backend just sent. */
+export function setAutomations(automations: Automation[] | null | undefined): void {
+  setState({ automations: list(automations) })
 }
 
 /**
@@ -396,6 +420,16 @@ function omit<T>(map: Record<string, T>, key: string): Record<string, T> {
 
 // ---- UI actions -----------------------------------------------------------------
 
+let onOpenFinished: ((agentId: string) => void) | null = null
+
+/**
+ * Called when the user opens an agent whose turn has finished. actions.ts sets it to clear the
+ * completed mark on the backend. It lives here as a hook so the store makes no backend calls itself.
+ */
+export function setOnOpenFinished(handler: ((agentId: string) => void) | null): void {
+  onOpenFinished = handler
+}
+
 export function selectAgent(id: string | null, opts: { openInspector?: boolean } = {}): void {
   setState((s) => {
     const agent = id ? s.agents[id] : undefined
@@ -403,8 +437,21 @@ export function selectAgent(id: string | null, opts: { openInspector?: boolean }
       selectedId: id,
       inspectorOpen: id ? (opts.openInspector ?? true) : false,
       activeProjectId: agent ? agent.projectId : s.activeProjectId,
+      // Closing the inspector also leaves focus mode, so the galaxy is never left hidden with nothing to show.
+      ...(id ? {} : { focusMode: false, galaxyBesideChat: false }),
     }
   })
+  // Opening a finished agent marks it seen. Clicking it again after it finished clears it too.
+  if (id && getState().agents[id]?.status === 'completed') onOpenFinished?.(id)
+}
+
+/** Enters or leaves focus mode. Leaving it always hides the galaxy toggle state too. */
+export function setFocusMode(on: boolean): void {
+  setState({ focusMode: on, galaxyBesideChat: false })
+}
+
+export function toggleGalaxyBesideChat(): void {
+  setState((s) => ({ galaxyBesideChat: !s.galaxyBesideChat }))
 }
 
 /** Asks the universe to fly the camera to an agent. */
@@ -430,18 +477,35 @@ export function setSidebar(patch: { width?: number; collapsed?: boolean }): void
 
 /** Merges a settings change, saves it, and applies it to the document straight away. */
 export function setSettings(patch: Partial<Settings>): void {
-  const settings = normaliseSettings({ ...getState().settings, ...patch })
+  const customThemes = getState().customThemes
+  const settings = normaliseSettings({ ...getState().settings, ...patch }, customThemes.map((t) => t.id))
   const reducedMotion = resolveReducedMotion(settings.motion, systemReducedMotion)
   saveSettings(settings)
-  applySettings(settings, reducedMotion)
+  applySettings(settings, reducedMotion, undefined, customThemes)
   setState({ settings, reducedMotion })
+}
+
+/** Adds an imported theme and switches to it. Once the list is full, the oldest import is dropped. */
+export function addCustomTheme(theme: ThemeInfo): void {
+  const customThemes = [...getState().customThemes, theme].slice(-MAX_CUSTOM_THEMES)
+  saveCustomThemes(customThemes)
+  setState({ customThemes })
+  setSettings({ theme: theme.id })
+}
+
+/** Removes an imported theme. If it was selected, the app falls back to Orbit. */
+export function removeCustomTheme(id: string): void {
+  const customThemes = getState().customThemes.filter((t) => t.id !== id)
+  saveCustomThemes(customThemes)
+  setState({ customThemes })
+  if (getState().settings.theme === id) setSettings({ theme: 'orbit' })
 }
 
 /** Called when the OS reduced-motion preference changes. */
 export function setSystemReducedMotion(reduced: boolean): void {
   systemReducedMotion = reduced
   setState({ reducedMotion: resolveReducedMotion(getState().settings.motion, reduced) })
-  applySettings(getState().settings, getState().reducedMotion)
+  applySettings(getState().settings, getState().reducedMotion, undefined, getState().customThemes)
 }
 
 export function openDialog(dialog: Dialog): void {

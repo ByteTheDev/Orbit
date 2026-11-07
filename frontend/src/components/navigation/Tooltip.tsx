@@ -20,7 +20,7 @@ export function Tooltip({ label, shortcut, align = 'center', children }: Props) 
       {children}
       <span
         aria-hidden="true"
-        className={`pointer-events-none absolute top-full z-50 mt-1.5 flex items-center gap-2 whitespace-nowrap rounded-md border border-white/[0.08] bg-popover px-2 py-1 text-label text-ink opacity-0 shadow-float transition-opacity duration-150 group-hover/tip:delay-[350ms] group-hover/tip:opacity-100 group-has-[:focus-visible]/tip:opacity-100 motion-reduce:transition-none ${place}`}
+        className={`pointer-events-none absolute top-full z-50 mt-1.5 flex items-center gap-2 whitespace-nowrap rounded-md border border-tint/[0.08] glass-tip px-2 py-1 text-label text-ink opacity-0 shadow-float transition-opacity duration-150 group-hover/tip:delay-[350ms] group-hover/tip:opacity-100 group-has-[:focus-visible]/tip:opacity-100 motion-reduce:transition-none ${place}`}
       >
         {label}
         {shortcut && <Kbd>{shortcut}</Kbd>}

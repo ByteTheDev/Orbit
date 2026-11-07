@@ -14,6 +14,7 @@ import { SidebarFilters } from './navigation/SidebarFilters'
 import { Tooltip } from './navigation/Tooltip'
 import { buildNavProjects, groupAgents, isFiltering, providersIn, type NavFilter } from './navigation/projectFilter'
 import { Button, IconAlert, IconPencil, IconPlus, IconTrash, IconFolder, IconSidebar } from './ui'
+import { FileIcon } from './ui/FileIcon'
 
 interface Props {
   onFocusProject: (projectId: string) => void
@@ -123,7 +124,7 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
     <aside
       ref={asideRef}
       style={{ width: collapsed ? SIDEBAR_RAIL : sidebarWidth }}
-      className="relative flex h-full max-w-[60vw] shrink-0 animate-slide-in-left flex-col border-r border-line bg-sidebar"
+      className="relative z-10 flex h-full max-w-[60vw] shrink-0 animate-slide-in-left flex-col border-r border-line glass-sidebar"
       aria-label="Projects"
     >
       {collapsed ? (
@@ -136,9 +137,9 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
         />
       ) : (
         <>
-          <header className="flex items-center justify-between gap-2 px-4 pb-3 pt-4">
+          <header className="flex items-center justify-between gap-2 px-3 pb-2 pt-3">
             <div className="flex min-w-0 items-baseline gap-2">
-              <h2 className="text-label font-semibold uppercase tracking-[0.12em] text-faint">Projects</h2>
+              <h2 className="text-label font-semibold uppercase tracking-[0.12em] text-muted">Projects</h2>
               {projectOrder.length > 0 && (
                 <span className="text-label font-medium tabular-nums text-faint" aria-label={`${countLabel} projects shown`}>
                   {loading && projectOrder.length === 0 ? '…' : countLabel}
@@ -151,7 +152,7 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
                 onClick={() => setSidebar({ collapsed: true })}
                 aria-label="Collapse sidebar"
                 title="Collapse sidebar"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-white/[0.06] hover:text-ink"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-tint/[0.06] hover:text-ink"
               >
                 <IconSidebar size={13} />
               </button>
@@ -173,6 +174,7 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
               onProvider={setProvider}
               bucket={bucket}
               bucketCounts={bucketCounts}
+              total={agentList.length}
               onBucket={setBucket}
               onReset={resetFilters}
             />
@@ -180,12 +182,12 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
 
           {!filtering && projectOrder.length > 0 && <ActiveAgents agents={agentList} projects={projects} selectedId={selectedId} onFocusAgent={onFocusAgent} />}
 
-          <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="Project list" aria-busy={loading && projectOrder.length === 0} onKeyDown={onNavKey}>
+          <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-2" aria-label="Project list" aria-busy={loading && projectOrder.length === 0} onKeyDown={onNavKey}>
             {loading && projectOrder.length === 0 && <SkeletonRows />}
 
             {!loading && projectOrder.length === 0 && (
               <div className="flex flex-col items-center px-5 pb-6 pt-12 text-center">
-                <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-white/[0.02] text-faint">
+                <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-tint/[0.02] text-faint">
                   <IconFolder size={16} />
                 </span>
                 <p className="text-body font-semibold text-ink">No projects yet</p>
@@ -207,7 +209,7 @@ export function ProjectsPanel({ onFocusProject, onFocusAgent, onOpenAgentMenu }:
             )}
 
             {rows.length > 0 && (
-              <ul role="list" className="space-y-0.5">
+              <ul role="list" className="space-y-px">
                 {rows.map((row) => (
                   <ProjectItem
                     key={row.project.id}
@@ -262,10 +264,10 @@ function SkeletonRows() {
     <ul className="space-y-1 px-1 pt-1" aria-label="Loading projects">
       {[0, 1, 2].map((i) => (
         <li key={i} className="flex items-center gap-2.5 px-2 py-2">
-          <span className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-white/[0.06] motion-reduce:animate-none" />
+          <span className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-tint/[0.06] motion-reduce:animate-none" />
           <span className="min-w-0 flex-1 space-y-1.5">
-            <span className="block h-2.5 w-2/3 animate-pulse rounded bg-white/[0.07] motion-reduce:animate-none" />
-            <span className="block h-2 w-1/2 animate-pulse rounded bg-white/[0.04] motion-reduce:animate-none" />
+            <span className="block h-2.5 w-2/3 animate-pulse rounded bg-tint/[0.07] motion-reduce:animate-none" />
+            <span className="block h-2 w-1/2 animate-pulse rounded bg-tint/[0.04] motion-reduce:animate-none" />
           </span>
         </li>
       ))}
@@ -291,7 +293,7 @@ function ConflictList({ projectId, conflicts }: { projectId: string; conflicts: 
     setTick((n) => n + 1)
   }
   return (
-    <section className="mx-1 mt-4 rounded-lg bg-warn/[0.05] px-3 py-2.5 ring-1 ring-inset ring-warn/15" aria-label="Possible conflicts">
+    <section className="mx-1.5 mt-3 rounded-md bg-warn/[0.06] px-2.5 py-2" aria-label="Possible conflicts">
       <h3 className="mb-2 flex items-center gap-1.5 text-label font-semibold text-warn-soft">
         <IconAlert size={11} />
         Possible conflicts
@@ -302,8 +304,11 @@ function ConflictList({ projectId, conflicts }: { projectId: string; conflicts: 
       <ul className="space-y-2">
         {conflicts.map((c) => (
           <li key={c.path} className="text-caption">
-            <span className="block truncate font-mono text-label text-ink/85" title={c.path}>
-              {c.path}
+            <span className="flex min-w-0 items-center gap-2">
+              <FileIcon path={c.path} size={14} />
+              <span className="block truncate font-mono text-label text-ink/85" title={c.path}>
+                {c.path}
+              </span>
             </span>
             <span className="block truncate text-label text-faint">Written by {c.agents.map((a) => a.name).join(', ')}</span>
           </li>

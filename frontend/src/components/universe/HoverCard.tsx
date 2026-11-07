@@ -13,7 +13,7 @@ export const HoverCard = forwardRef<HTMLDivElement, Props>(function HoverCard({ 
     <div
       ref={ref}
       aria-hidden="true"
-      className="pointer-events-none absolute left-0 top-0 w-64 rounded-lg border border-white/[0.08] bg-popover/95 p-3 shadow-popover backdrop-blur-md transition-opacity duration-150"
+      className="pointer-events-none absolute left-0 top-0 w-64 rounded-lg border border-tint/[0.08] glass-popover p-3 shadow-popover transition-opacity duration-150"
       style={{ opacity: 0 }}
     >
       {agent && (

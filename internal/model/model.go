@@ -114,6 +114,16 @@ func (c Capabilities) SupportsFastMode(id string) bool {
 	return false
 }
 
+// SupportsUltraFast reports whether the offered model id can run in ultrafast mode on this account.
+func (c Capabilities) SupportsUltraFast(id string) bool {
+	for _, m := range c.Models {
+		if m.ID == id {
+			return m.UltraFast
+		}
+	}
+	return false
+}
+
 // ModelOption is one model a provider offers. ID is what the CLI receives.
 type ModelOption struct {
 	ID          string `json:"id"`
@@ -122,6 +132,8 @@ type ModelOption struct {
 	Description string `json:"description"`
 	// FastMode is true when the provider can run this model in fast mode.
 	FastMode bool `json:"fastMode"`
+	// UltraFast is true when the signed-in account can run this model in ultrafast mode.
+	UltraFast bool `json:"ultraFast"`
 	// Effort lists the thinking effort levels this model accepts, lowest first. Empty means the
 	// model has no effort control.
 	Effort []string `json:"effort"`
@@ -273,24 +285,50 @@ const (
 	ConvFailed  = "failed"
 )
 
+// ConversationLine is one message in a talk: the opening topic (AgentID empty, from the user) or one
+// agent's reply. Text has its [[DONE]] marker removed.
+type ConversationLine struct {
+	AgentID  string `json:"agentId"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Text     string `json:"text"`
+	At       int64  `json:"at"`
+}
+
+// MaxConversationLines bounds the transcript kept per talk. The oldest lines fall off first.
+const MaxConversationLines = 40
+
 // Conversation is a live back-and-forth between two agents in one project. Each finished reply
 // is passed to the other agent as its next message. Conversations are live state, not persisted.
 type Conversation struct {
-	ID         string `json:"id"`
-	ProjectID  string `json:"projectId"`
-	AgentAID   string `json:"agentAId"`
-	AgentBID   string `json:"agentBId"`
-	Topic      string `json:"topic"`
-	Status     string `json:"status"` // active | done | stopped | failed
-	NextID     string `json:"nextId"` // the agent whose turn is running or due next
-	Replies    int    `json:"replies"`
-	MaxReplies int    `json:"maxReplies"`
-	Error      string `json:"error,omitempty"`
-	At         int64  `json:"at"`
-	DoneAt     int64  `json:"doneAt,omitempty"`
+	ID         string             `json:"id"`
+	ProjectID  string             `json:"projectId"`
+	AgentAID   string             `json:"agentAId"`
+	AgentBID   string             `json:"agentBId"`
+	Topic      string             `json:"topic"`
+	Status     string             `json:"status"` // active | done | stopped | failed
+	NextID     string             `json:"nextId"` // the agent whose turn is running or due next
+	Replies    int                `json:"replies"`
+	MaxReplies int                `json:"maxReplies"`
+	// Members are the agents in the talk, in speaking order. AgentAID and AgentBID are the first two.
+	Members    []string           `json:"members"`
+	Lines      []ConversationLine `json:"lines"`
+	Error      string             `json:"error,omitempty"`
+	At         int64              `json:"at"`
+	DoneAt     int64              `json:"doneAt,omitempty"`
 }
 
 // AgentRecord is the complete, persisted state of one agent.
+// BranchInfo is what the launch dialog needs to offer a project's branches.
+type BranchInfo struct {
+	// Current is the branch checked out in the project folder. Empty when HEAD is detached.
+	Current string `json:"current"`
+	// Branches are the local branches, sorted by name.
+	Branches []string `json:"branches"`
+	// WorktreeRoot is the folder new worktrees for this project are created in.
+	WorktreeRoot string `json:"worktreeRoot"`
+}
+
 type AgentRecord struct {
 	ID             string `json:"id"`
 	ProjectID      string `json:"projectId"`
@@ -298,6 +336,10 @@ type AgentRecord struct {
 	Provider       string `json:"provider"`
 	Model          string `json:"model"`
 	Task           string `json:"task"`
+	// Branch is the git branch the agent works on, when it was launched on a worktree.
+	Branch string `json:"branch,omitempty"`
+	// WorkDir is the folder the agent runs in: its worktree, or the project folder when empty.
+	WorkDir string `json:"workDir,omitempty"`
 	PermissionMode string `json:"permissionMode"`
 	Status         Status `json:"status"`
 	StatusDetail   string `json:"statusDetail"`
@@ -307,6 +349,8 @@ type AgentRecord struct {
 	SessionSeen bool `json:"sessionSeen"`
 	Running     bool `json:"running"`
 	FastMode    bool `json:"fastMode"`
+	// UltraFast runs the agent in ultrafast mode, which implies FastMode.
+	UltraFast bool `json:"ultraFast"`
 	// Effort is the thinking effort level for this agent's turns. Empty means the CLI default.
 	Effort       string                   `json:"effort"`
 	Position     *Point                   `json:"position,omitempty"`
@@ -335,12 +379,15 @@ type AgentSummary struct {
 	ProviderName   string `json:"providerName"`
 	Model          string `json:"model"`
 	Task           string `json:"task"`
+	// Branch is the git branch the agent works on, when it has its own worktree or was launched on one.
+	Branch string `json:"branch,omitempty"`
 	PermissionMode string `json:"permissionMode"`
 	Status         Status `json:"status"`
 	StatusDetail   string `json:"statusDetail"`
 	SessionID      string `json:"sessionId"`
 	Running        bool   `json:"running"`
 	FastMode       bool   `json:"fastMode"`
+	UltraFast      bool   `json:"ultraFast"`
 	// Effort is the thinking effort level for this agent's turns. Empty means the CLI default.
 	Effort       string `json:"effort"`
 	Position     *Point `json:"position,omitempty"`

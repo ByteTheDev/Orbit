@@ -4,23 +4,48 @@
 // Cost model: each planet's body (surface, bands, craters, atmosphere, rings) is drawn
 // once into a cached sprite. Per frame a planet costs one drawImage, a directional
 // lighting overlay that follows its sun, and its status and selection marks.
-import type { AgentSummary, Handoff, ProjectSummary, Status, SubAgent } from '../../types'
+import type { AgentSummary, Conversation, Handoff, ProjectSummary, Status, SubAgent } from '../../types'
 import { toolKind, type ToolKind } from '../toolKind'
 import { BEAM_COLOR, beamAlpha, computeBeams, type Beam } from './beams'
 import { DEFAULT_BODY, PROVIDER_BODY, STATUS_COLOR, type PlanetBody } from '../theme'
+
+// Brand images are decoded once. Until one has loaded, its planet shows the letter fallback,
+// and the listeners (the galaxy view) redraw when it arrives.
+const logoImages = new Map<string, HTMLImageElement>()
+const logoListeners = new Set<() => void>()
+
+/** Calls `cb` whenever a brand image finishes loading. Returns the unsubscribe function. */
+export function onLogoLoaded(cb: () => void): () => void {
+  logoListeners.add(cb)
+  return () => {
+    logoListeners.delete(cb)
+  }
+}
+
+function logoImage(src: string): HTMLImageElement {
+  let img = logoImages.get(src)
+  if (!img) {
+    img = new Image()
+    img.onload = () => logoListeners.forEach((cb) => cb())
+    img.src = src
+    logoImages.set(src, img)
+  }
+  return img
+}
 import { worldToScreen, type Camera } from './camera'
 import { ORBIT_FLOOR_PX, ORBIT_GAP_PX, displayOrbit, planetPosition, type Layout, type Planet } from './layout'
 import { projectIconImage } from '../icons'
 import { identityFor } from '../projectIdentity'
 
 const PLANET_RADIUS = 30 // world units: large enough that surface detail reads at fit zoom
-const SUN_RADIUS = 46 // world units: the star body, sized so its surface still reads when zoomed out
+const SUN_RADIUS = 38 // world units: the star body, sized so its surface still reads when zoomed out
 const ROCK_ORBIT = 58
 /** Rocks shown per agent: the newest tool calls. Matches the backend's recent-tools cap. */
 const MAX_ROCKS = 8
 const ROCK_RADIUS = 6.5 // screen px: big enough to read as a solid object on the dark canvas
 const TAU = Math.PI * 2
 const RING_TILT = -0.32
+
 export const PULSE_MS = 900
 /** Period of the red ring a failed agent repeats. */
 const FAIL_RING_MS = 1400
@@ -30,10 +55,45 @@ const SPRITE_R = 32
 const SPRITE_EXTENT = SPRITE_R * 2.4
 const SPRITE_LIMIT = 96
 
-/** Colour tokens used by the canvas. Mirrors index.css; read through theme.ts where possible. */
-const INK = '#f4f4f5'
-const MUTED = '#a1a1aa'
-const CANVAS = '#09090b'
+/**
+ * Colours the canvas draws with. They follow the active theme, so the galaxy reads on light and dark
+ * alike. `readScheme` refreshes them from the document's CSS variables at the start of each draw.
+ */
+export interface Scheme {
+  light: boolean
+  canvas: string
+  ink: string
+  muted: string
+  /** Grey for the planet bands and the selection and hover halos. */
+  ring: string
+  /** Star specks in the backdrop. */
+  star: string
+}
+
+const DARK_SCHEME: Scheme = { light: false, canvas: '#09090b', ink: '#f4f4f5', muted: '#a1a1aa', ring: '#a1a1aa', star: '#e4e4e7' }
+const LIGHT_SCHEME: Scheme = { light: true, canvas: '#fafafa', ink: '#18181b', muted: '#52525b', ring: '#a1a1aa', star: '#52525b' }
+
+let S: Scheme = DARK_SCHEME
+
+/** The canvas colours for the theme currently applied to the document. Falls back to the dark scheme without one. */
+export function readScheme(): Scheme {
+  if (typeof document === 'undefined') return DARK_SCHEME
+  const css = getComputedStyle(document.documentElement)
+  const read = (name: string) => css.getPropertyValue(`--color-${name}`).trim()
+  // lib/settings.ts sets the tint to black on light themes and white on dark ones.
+  const light = read('tint') === '#000000'
+  const base = light ? LIGHT_SCHEME : DARK_SCHEME
+  S = {
+    light,
+    canvas: read('canvas') || base.canvas,
+    ink: read('ink') || base.ink,
+    muted: read('muted') || base.muted,
+    ring: base.ring,
+    star: base.star,
+  }
+  return S
+}
+
 const SUN_CORE = '#fff4dc'
 
 export interface Pulse {
@@ -137,13 +197,14 @@ export function makeBackdrop(w: number, h: number, dpr: number): HTMLCanvasEleme
   const ctx = c.getContext('2d')
   if (!ctx) return c
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  readScheme()
 
-  // Near-black, lifted very slightly at the centre so the planets sit in a little light.
-  ctx.fillStyle = CANVAS
+  // Near-black (or near-white on light themes), lifted very slightly at the centre so the planets sit in a little light.
+  ctx.fillStyle = S.canvas
   ctx.fillRect(0, 0, w, h)
   const glow = ctx.createRadialGradient(w * 0.5, h * 0.45, 0, w * 0.5, h * 0.45, Math.max(w, h) * 0.6)
-  glow.addColorStop(0, 'rgba(244,244,245,0.035)')
-  glow.addColorStop(1, 'rgba(244,244,245,0)')
+  glow.addColorStop(0, withAlpha(S.ink, 0.035))
+  glow.addColorStop(1, withAlpha(S.ink, 0))
   ctx.fillStyle = glow
   ctx.fillRect(0, 0, w, h)
 
@@ -158,7 +219,7 @@ export function makeBackdrop(w: number, h: number, dpr: number): HTMLCanvasEleme
     const x = rnd() * w
     const y = rnd() * h
     const r = rnd() < 0.07 ? 1.2 : 0.6
-    ctx.fillStyle = `rgba(228,228,231,${(0.1 + rnd() * 0.42).toFixed(3)})`
+    ctx.fillStyle = withAlpha(S.star, 0.1 + rnd() * 0.42)
     ctx.fillRect(x, y, r, r)
   }
   return c
@@ -168,6 +229,7 @@ export function makeBackdrop(w: number, h: number, dpr: number): HTMLCanvasEleme
 
 export function drawUniverse(ctx: CanvasRenderingContext2D, view: ViewState, backdrop: HTMLCanvasElement | null): void {
   const { width: w, height: h, dpr, camera: cam, layout, agents } = view
+  readScheme()
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
   if (backdrop) ctx.drawImage(backdrop, 0, 0, w, h)
@@ -183,7 +245,7 @@ export function drawUniverse(ctx: CanvasRenderingContext2D, view: ViewState, bac
     // Inactive tracks are hairlines that recede into the nebula. The selected track is the one clear line.
     ctx.lineWidth = selected ? 1.25 : 0.75
     ctx.setLineDash([])
-    ctx.strokeStyle = selected ? 'rgba(244,244,245,0.6)' : 'rgba(244,244,245,0.16)'
+    ctx.strokeStyle = selected ? withAlpha(S.ink, 0.6) : withAlpha(S.ink, 0.16)
     ctx.beginPath()
     ctx.arc(sun.x, sun.y, r, 0, TAU)
     ctx.stroke()
@@ -218,7 +280,7 @@ export function drawUniverse(ctx: CanvasRenderingContext2D, view: ViewState, bac
     // A soft dark backdrop keeps the name readable over bright nebula without adding a shadow blur.
     drawLabelBackdrop(ctx, box)
     ctx.font = '600 14px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
-    ctx.fillStyle = 'rgba(244,244,245,0.9)'
+    ctx.fillStyle = withAlpha(S.ink, 0.9)
     if (project) drawProjectBadge(ctx, s.x - nameW / 2 - 14, labelY + 7, project)
     ctx.fillText(label, s.x, labelY)
     if (project && project.conflicts.length > 0) {
@@ -226,7 +288,7 @@ export function drawUniverse(ctx: CanvasRenderingContext2D, view: ViewState, bac
     }
     if (meta) {
       ctx.font = '11px "Segoe UI", system-ui, sans-serif'
-      ctx.fillStyle = MUTED
+      ctx.fillStyle = S.muted
       ctx.fillText(meta, s.x, labelY + 16)
     }
   }
@@ -278,8 +340,12 @@ const HANDOFF_RING_MS = 900
  */
 function drawBeams(ctx: CanvasRenderingContext2D, view: ViewState): void {
   const handoffs: Handoff[] = []
-  for (const p of view.projects.values()) handoffs.push(...(p.handoffs ?? []))
-  const beams = computeBeams([...view.agents.values()], handoffs, view.now)
+  const talks: Conversation[] = []
+  for (const p of view.projects.values()) {
+    handoffs.push(...(p.handoffs ?? []))
+    talks.push(...(p.conversations ?? []))
+  }
+  const beams = computeBeams([...view.agents.values()], handoffs, view.now, talks)
   if (beams.length === 0) return
 
   const centres = new Map<string, { x: number; y: number }>()
@@ -349,6 +415,25 @@ function drawBeam(
         ctx.beginPath()
         ctx.arc(b.x, b.y, (PLANET_RADIUS + ringT * 40) * view.camera.zoom, 0, TAU)
         ctx.stroke()
+      }
+      break
+    }
+    case 'talk': {
+      // A talk runs both ways, so a dot travels each direction along a dashed line.
+      ctx.setLineDash([4, 5])
+      ctx.lineDashOffset = -crawl * 1.4
+      ctx.lineWidth = 1.7
+      ctx.strokeStyle = withAlpha(color, 0.85 * alpha)
+      ctx.stroke()
+      if (!view.reduced) {
+        const base = (view.now / DELEGATION_PERIOD_MS + (hashString(beam.key) % 100) / 100) % 1
+        ctx.fillStyle = withAlpha(color, alpha)
+        for (const phase of [base, (base + 0.5) % 1]) {
+          const q = quadPoint(a, c, b, phase)
+          ctx.beginPath()
+          ctx.arc(q.x, q.y, 2.6, 0, TAU)
+          ctx.fill()
+        }
       }
       break
     }
@@ -466,12 +551,13 @@ function sunSprite(accent: string): HTMLCanvasElement {
   // fades smoothly through the accent colour into nothing, so it reads as luminous.
   const hot = mixHex(accent, '#ffffff', 0.85)
   const warm = mixHex(accent, '#ffffff', 0.4)
+  // A tight white-hot core, a short colour falloff, and nothing past the edge of the sprite.
   const light = g.createRadialGradient(cx, cx, 0, cx, cx, r)
   light.addColorStop(0, withAlpha(hot, 1))
-  light.addColorStop(0.18, withAlpha(hot, 0.97))
-  light.addColorStop(0.4, withAlpha(warm, 0.88))
-  light.addColorStop(0.65, withAlpha(accent, 0.5))
-  light.addColorStop(0.85, withAlpha(accent, 0.16))
+  light.addColorStop(0.12, withAlpha(hot, 0.98))
+  light.addColorStop(0.26, withAlpha(warm, 0.72))
+  light.addColorStop(0.45, withAlpha(accent, 0.34))
+  light.addColorStop(0.7, withAlpha(accent, 0.1))
   light.addColorStop(1, withAlpha(accent, 0))
   g.fillStyle = light
   g.fillRect(0, 0, side, side)
@@ -503,21 +589,24 @@ function drawSun(ctx: CanvasRenderingContext2D, x: number, y: number, accent: st
 
   ctx.save()
   ctx.globalCompositeOperation = 'lighter'
-  const bloom = Math.max(core * 7, 120 * zoom)
+  // Outer atmosphere: a faint, wide falloff that lifts the nearby nebula without washing it out.
+  const bloom = Math.max(core * 4.2, 70 * zoom)
   const glow = ctx.createRadialGradient(x, y, 0, x, y, bloom)
-  glow.addColorStop(0, withAlpha(accent, 0.42 * breath))
-  glow.addColorStop(0.18, withAlpha(accent, 0.16 * breath))
-  glow.addColorStop(0.5, withAlpha(accent, 0.04 * breath))
+  glow.addColorStop(0, withAlpha(accent, 0.2 * breath))
+  glow.addColorStop(0.22, withAlpha(accent, 0.07 * breath))
+  glow.addColorStop(0.55, withAlpha(accent, 0.016 * breath))
   glow.addColorStop(1, withAlpha(accent, 0))
   ctx.fillStyle = glow
   ctx.beginPath()
   ctx.arc(x, y, bloom, 0, TAU)
   ctx.fill()
 
-  const corona = core * 2.8
-  const halo = ctx.createRadialGradient(x, y, core * 0.4, x, y, corona)
-  halo.addColorStop(0, withAlpha(SUN_CORE, 0.5 * breath))
-  halo.addColorStop(0.4, withAlpha(accent, 0.24 * breath))
+  // Colour halo: tight and concentrated, feathering from a warm white rim into the star's colour.
+  const corona = core * 1.9
+  const halo = ctx.createRadialGradient(x, y, core * 0.5, x, y, corona)
+  halo.addColorStop(0, withAlpha(SUN_CORE, 0.32 * breath))
+  halo.addColorStop(0.3, withAlpha(accent, 0.18 * breath))
+  halo.addColorStop(0.7, withAlpha(accent, 0.04 * breath))
   halo.addColorStop(1, withAlpha(accent, 0))
   ctx.fillStyle = halo
   ctx.beginPath()
@@ -525,7 +614,8 @@ function drawSun(ctx: CanvasRenderingContext2D, x: number, y: number, accent: st
   ctx.fill()
 
   if (core >= 10) {
-    const spike = core * 3.1
+    // Diffraction spikes: kept faint and short so they read as a hint of light, not crosshairs.
+    const spike = core * 2.4
     ctx.lineWidth = 1
     for (const horizontal of [true, false]) {
       const gx = horizontal ? x - spike : x
@@ -534,7 +624,7 @@ function drawSun(ctx: CanvasRenderingContext2D, x: number, y: number, accent: st
       const ey = horizontal ? y : y + spike
       const beam = ctx.createLinearGradient(gx, gy, ex, ey)
       beam.addColorStop(0, withAlpha(SUN_CORE, 0))
-      beam.addColorStop(0.5, withAlpha(SUN_CORE, 0.22))
+      beam.addColorStop(0.5, withAlpha(SUN_CORE, 0.07))
       beam.addColorStop(1, withAlpha(SUN_CORE, 0))
       ctx.strokeStyle = beam
       ctx.beginPath()
@@ -669,29 +759,26 @@ function drawPlanet(ctx: CanvasRenderingContext2D, agent: AgentSummary, sunS: { 
   ctx.lineCap = 'butt'
 
   if (selected) {
-    ctx.strokeStyle = 'rgba(244,244,245,0.95)'
+    ctx.strokeStyle = withAlpha(S.ring, 0.95)
     ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.arc(s.x, s.y, ringR + 5, 0, TAU)
     ctx.stroke()
     ctx.lineWidth = 1
   } else if (hovered) {
-    ctx.strokeStyle = 'rgba(244,244,245,0.45)'
+    ctx.strokeStyle = withAlpha(S.ring, 0.5)
     ctx.beginPath()
     ctx.arc(s.x, s.y, ringR + 4, 0, TAU)
     ctx.stroke()
   }
 
   if (r >= 9) {
-    ctx.fillStyle = 'rgba(9,9,11,0.78)'
-    if (body.logo) {
-      // Brand mark: the 24×24 path scaled to about 60% of the planet's diameter, centred.
-      const k = (r * 2 * 0.6) / 24
-      ctx.save()
-      ctx.translate(s.x - 12 * k, s.y - 12 * k)
-      ctx.scale(k, k)
-      ctx.fill(new Path2D(body.logo))
-      ctx.restore()
+    ctx.fillStyle = body.logoInk ?? withAlpha(S.canvas, 0.78)
+    const logo = body.logo ? logoImage(body.logo) : null
+    if (logo && logo.complete && logo.naturalWidth > 0) {
+      // Brand image: about 60% of the planet's diameter, centred.
+      const d = r * 2 * 0.6
+      ctx.drawImage(logo, s.x - d / 2, s.y - d / 2, d, d)
     } else {
       ctx.font = `700 ${Math.round(Math.min(14, r * 0.85))}px "Segoe UI", system-ui, sans-serif`
       ctx.textAlign = 'center'
@@ -713,13 +800,13 @@ function drawPlanet(ctx: CanvasRenderingContext2D, agent: AgentSummary, sunS: { 
     ctx.lineJoin = 'round'
     ctx.font = '600 14px "Segoe UI Variable", "Segoe UI", system-ui, sans-serif'
     ctx.lineWidth = 3
-    ctx.strokeStyle = 'rgba(9,9,11,0.7)'
+    ctx.strokeStyle = withAlpha(S.canvas, 0.7)
     ctx.strokeText(agent.name, s.x, s.y + ringR + 9)
-    ctx.fillStyle = selected || hovered ? INK : 'rgba(244,244,245,0.86)'
+    ctx.fillStyle = selected || hovered ? S.ink : withAlpha(S.ink, 0.86)
     ctx.fillText(agent.name, s.x, s.y + ringR + 9)
     ctx.font = '11px "Segoe UI", system-ui, sans-serif'
     ctx.lineWidth = 3
-    ctx.strokeStyle = 'rgba(9,9,11,0.7)'
+    ctx.strokeStyle = withAlpha(S.canvas, 0.7)
     const detail = statusLabel(status, agent.statusDetail)
     ctx.strokeText(detail, s.x, s.y + ringR + 25)
     ctx.fillStyle = withAlpha(color, 0.95)
@@ -729,7 +816,7 @@ function drawPlanet(ctx: CanvasRenderingContext2D, agent: AgentSummary, sunS: { 
 
 /** A small glyph disc on a planet's shoulder: a tick for completed, a cross for failed. */
 function drawStateBadge(ctx: CanvasRenderingContext2D, x: number, y: number, rad: number, glyph: 'tick' | 'cross', color: string): void {
-  ctx.fillStyle = 'rgba(9,9,11,0.92)'
+  ctx.fillStyle = withAlpha(S.canvas, 0.92)
   ctx.beginPath()
   ctx.arc(x, y, rad + 1.5, 0, TAU)
   ctx.fill()
@@ -875,13 +962,15 @@ function drawBody(ctx: CanvasRenderingContext2D, x: number, y: number, r: number
   ctx.restore()
 }
 
-/** A tilted ring. The back half sits behind the planet and the front half in front of it. */
+/**
+ * A tilted ring. The back half sits behind the planet and the front half in front of it.
+ * Grey, so the rings stay quiet and the planet's own colour carries the eye.
+ */
 function drawRing(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, half: 'back' | 'front'): void {
   ctx.save()
   ctx.translate(x, y)
   ctx.rotate(RING_TILT)
-  // Always light, whatever the planet's colour, so the ring reads against the dark canvas.
-  ctx.strokeStyle = withAlpha(INK, half === 'back' ? 0.7 : 0.95)
+  ctx.strokeStyle = withAlpha(S.ring, half === 'back' ? 0.7 : 0.95)
   ctx.lineWidth = Math.max(1.6, r * 0.17)
   ctx.beginPath()
   if (half === 'back') ctx.ellipse(0, 0, r * 2.05, r * 0.5, 0, Math.PI, TAU)
@@ -928,7 +1017,7 @@ const TOOL_COLOR: Record<ToolKind, string> = {
   web: '#34d399',
   agent: '#f0abfc',
   mcp: '#22d3ee',
-  other: MUTED,
+  other: S.muted,
 }
 const FAILED_ROCK = '#f87171'
 
@@ -963,7 +1052,7 @@ function drawSubAgent(ctx: CanvasRenderingContext2D, x: number, y: number, sub: 
     ctx.arc(x, y, R * 2, 0, TAU)
     ctx.fill()
   }
-  ctx.fillStyle = withAlpha(CANVAS, 0.92)
+  ctx.fillStyle = withAlpha(S.canvas, 0.92)
   ctx.beginPath()
   ctx.arc(x, y, R, 0, TAU)
   ctx.fill()
@@ -1000,7 +1089,7 @@ function drawSubAgents(ctx: CanvasRenderingContext2D, agent: AgentSummary, s: { 
   const working = [...icons].reverse().find((i) => i.sub.status === 'running')
   if (!working) return
   const text = working.sub.detail || working.sub.name
-  ctx.fillStyle = withAlpha(MUTED, 0.95)
+  ctx.fillStyle = withAlpha(S.muted, 0.95)
   ctx.font = '600 9.5px "Segoe UI", system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'bottom'
@@ -1025,7 +1114,7 @@ function drawRock(
   const pulse = view.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(view.now / 260)
 
   // Orbit trail back to the planet, drawn faintly.
-  ctx.strokeStyle = 'rgba(244,244,245,0.09)'
+  ctx.strokeStyle = withAlpha(S.ink, 0.09)
   ctx.beginPath()
   ctx.moveTo(planetScreen.x, planetScreen.y)
   ctx.lineTo(s.x, s.y)
@@ -1066,7 +1155,7 @@ function drawRock(
 
   // The command's name under the rock, once zoomed in enough to read it.
   if (cam.zoom >= 0.6) {
-    ctx.fillStyle = withAlpha(failed ? FAILED_ROCK : MUTED, scale)
+    ctx.fillStyle = withAlpha(failed ? FAILED_ROCK : S.muted, scale)
     ctx.font = '600 9px "Segoe UI", system-ui, sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
@@ -1080,7 +1169,7 @@ function drawLabelBackdrop(ctx: CanvasRenderingContext2D, box: LabelBox): void {
   const y = box.y0 - 2
   const width = box.x1 - box.x0 - 12
   const height = box.y1 - box.y0 + 4
-  ctx.fillStyle = 'rgba(9,9,11,0.38)'
+  ctx.fillStyle = withAlpha(S.canvas, 0.38)
   ctx.beginPath()
   ctx.roundRect(x, y, width, height, 8)
   ctx.fill()
@@ -1091,7 +1180,7 @@ function drawBadge(ctx: CanvasRenderingContext2D, x: number, y: number, text: st
   ctx.beginPath()
   ctx.arc(x, y, 8, 0, TAU)
   ctx.fill()
-  ctx.fillStyle = CANVAS
+  ctx.fillStyle = S.canvas
   ctx.font = '700 10px "Segoe UI", system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'

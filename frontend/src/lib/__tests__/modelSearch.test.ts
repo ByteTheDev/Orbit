@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterModels, groupModels, type SearchableModel } from '../modelSearch'
+import { carryOverSettings, filterModels, groupModels, type SearchableModel } from '../modelSearch'
 
 const models: SearchableModel[] = [
   { id: 'claude-opus-5-5', label: 'Opus 5.5', group: 'Flagship', description: 'Deepest reasoning' },
@@ -41,5 +41,26 @@ describe('groupModels', () => {
 
   it('returns no groups for no models', () => {
     expect(groupModels([])).toEqual([])
+  })
+})
+
+describe('carryOverSettings', () => {
+  const think = { effort: ['low', 'high'], fastMode: false }
+
+  it('keeps a thinking level the new model offers', () => {
+    expect(carryOverSettings(think, 'high', false)).toEqual({ effort: 'high', fast: false, ultra: false })
+  })
+
+  it('drops a thinking level the new model does not offer', () => {
+    expect(carryOverSettings(think, 'max', false)).toEqual({ effort: '', fast: false, ultra: false })
+  })
+
+  it('keeps fast mode only on a model that supports it', () => {
+    expect(carryOverSettings({ effort: [], fastMode: true }, '', true)).toEqual({ effort: '', fast: true, ultra: false })
+    expect(carryOverSettings({ effort: [], fastMode: false }, '', true)).toEqual({ effort: '', fast: false, ultra: false })
+  })
+
+  it('clears everything for the provider default', () => {
+    expect(carryOverSettings(undefined, 'high', true)).toEqual({ effort: '', fast: false, ultra: false })
   })
 })

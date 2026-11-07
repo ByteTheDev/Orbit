@@ -28,9 +28,11 @@ const (
 	// maxTextRunes caps the readable text returned for one page.
 	maxTextRunes = 60000
 	// maxLinks caps the links returned for one page.
-	maxLinks  = 150
-	maxRedirs = 10
-	userAgent = "Mozilla/5.0 (compatible; Orbit/1.0; +https://github.com/orbit)"
+	maxLinks = 150
+	// maxHeadings caps the outline kept for one page.
+	maxHeadings = 80
+	maxRedirs   = 10
+	userAgent   = "Mozilla/5.0 (compatible; Orbit/1.0; +https://github.com/orbit)"
 )
 
 // Link is one anchor on a page, with its address resolved against the page URL.
@@ -48,6 +50,20 @@ type Page struct {
 	Text        string `json:"text"`
 	Links       []Link `json:"links"` // never nil: [] when the page has none
 	Truncated   bool   `json:"truncated"`
+}
+
+// Heading is one h1 to h4 on a page, in reading order.
+type Heading struct {
+	Level int
+	Text  string
+}
+
+// Document is a Page plus what the agent tool reads from the markup: the meta description and
+// an outline. The browser's own views use Page alone, so this stays off the frontend bindings.
+type Document struct {
+	Page
+	Description string
+	Headings    []Heading
 }
 
 var client = &http.Client{
@@ -91,25 +107,32 @@ func checkScheme(u *url.URL) (*url.URL, error) {
 // Fetch downloads a page and reads it. A non-success HTTP status is not an error: the page is
 // returned with its status so the caller can show it. Binary content returns an error.
 func Fetch(ctx context.Context, address string) (Page, error) {
+	doc, err := FetchDocument(ctx, address)
+	return doc.Page, err
+}
+
+// FetchDocument downloads a page and reads it, keeping the description and outline as well.
+// It shares Fetch's rules: non-success statuses are returned, and binary content is an error.
+func FetchDocument(ctx context.Context, address string) (Document, error) {
 	u, err := ParseURL(address)
 	if err != nil {
-		return Page{}, err
+		return Document{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return Page{}, err
+		return Document{}, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5")
 	resp, err := client.Do(req)
 	if err != nil {
-		return Page{}, fmt.Errorf("could not load %s: %v", u.Host, err)
+		return Document{}, fmt.Errorf("could not load %s: %v", u.Host, err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
-		return Page{}, fmt.Errorf("the page stopped loading: %v", err)
+		return Document{}, fmt.Errorf("the page stopped loading: %v", err)
 	}
 	truncated := len(body) > maxBodyBytes
 	if truncated {
@@ -117,7 +140,7 @@ func Fetch(ctx context.Context, address string) (Page, error) {
 	}
 
 	mt := mediaType(resp.Header.Get("Content-Type"), body)
-	page := Page{URL: resp.Request.URL.String(), Status: resp.StatusCode, ContentType: mt, Links: []Link{}, Truncated: truncated}
+	out := Document{Page: Page{URL: resp.Request.URL.String(), Status: resp.StatusCode, ContentType: mt, Links: []Link{}, Truncated: truncated}}
 	raw := resp.Header.Get("Content-Type")
 
 	switch {
@@ -128,19 +151,19 @@ func Fetch(ctx context.Context, address string) (Page, error) {
 		}
 		doc, err := html.Parse(r)
 		if err != nil {
-			return Page{}, fmt.Errorf("could not read the page: %v", err)
+			return Document{}, fmt.Errorf("could not read the page: %v", err)
 		}
-		extract(doc, resp.Request.URL, &page)
+		extract(doc, resp.Request.URL, &out)
 	case strings.HasPrefix(mt, "text/") || mt == "application/json":
-		page.Text = strings.ToValidUTF8(string(body), "�")
+		out.Text = strings.ToValidUTF8(string(body), "�")
 	default:
-		return Page{}, fmt.Errorf("this address is %s, which the browser cannot show as text", mt)
+		return Document{}, fmt.Errorf("this address is %s, which the browser cannot show as text", mt)
 	}
 
-	if page.Text, truncated = cutRunes(page.Text, maxTextRunes); truncated {
-		page.Truncated = true
+	if out.Text, truncated = cutRunes(out.Text, maxTextRunes); truncated {
+		out.Truncated = true
 	}
-	return page, nil
+	return out, nil
 }
 
 // mediaType returns the lower-case media type from the header, or sniffs the body when the
@@ -168,8 +191,17 @@ var blocks = map[string]bool{
 	"blockquote": true, "pre": true, "table": true, "dt": true, "dd": true, "hr": true, "form": true,
 }
 
-// extract fills Title, Text and Links from a parsed HTML document.
-func extract(doc *html.Node, base *url.URL, page *Page) {
+// headingLevel returns 1 to 4 for h1 to h4, and 0 for anything else.
+func headingLevel(name string) int {
+	if len(name) == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '4' {
+		return int(name[1] - '0')
+	}
+	return 0
+}
+
+// extract fills Title, Description, Headings, Text and Links from a parsed HTML document.
+func extract(doc *html.Node, base *url.URL, out *Document) {
+	page := &out.Page
 	var text textBuilder
 	seen := map[string]bool{}
 
@@ -177,11 +209,19 @@ func extract(doc *html.Node, base *url.URL, page *Page) {
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
 			name := strings.ToLower(n.Data)
+			if level := headingLevel(name); level > 0 && len(out.Headings) < maxHeadings {
+				if t := collapse(textOf(n)); t != "" {
+					out.Headings = append(out.Headings, Heading{Level: level, Text: t})
+				}
+			}
 			switch {
 			case name == "title":
 				if page.Title == "" {
 					page.Title = collapse(textOf(n))
 				}
+				return
+			case name == "meta":
+				addMeta(n, out)
 				return
 			case skipped[name]:
 				return
@@ -236,6 +276,20 @@ func addLink(n *html.Node, base *url.URL, page *Page, seen map[string]bool) {
 		label = s
 	}
 	page.Links = append(page.Links, Link{Text: label, URL: s})
+}
+
+// addMeta keeps the first meta description, from the standard tag or Open Graph.
+func addMeta(n *html.Node, out *Document) {
+	if out.Description != "" {
+		return
+	}
+	key := strings.ToLower(attr(n, "name"))
+	if key == "" {
+		key = strings.ToLower(attr(n, "property"))
+	}
+	if key == "description" || key == "og:description" {
+		out.Description = collapse(attr(n, "content"))
+	}
 }
 
 func attr(n *html.Node, key string) string {

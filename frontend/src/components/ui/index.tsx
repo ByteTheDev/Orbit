@@ -40,9 +40,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
       'active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none motion-reduce:active:scale-100'
     const sizes: Record<ButtonSize, string> = { sm: 'h-7 px-2.5 text-caption', md: 'h-8 px-3 text-body' }
     const variants: Record<ButtonVariant, string> = {
-      primary: 'bg-ink text-canvas shadow-sm shadow-black/30 hover:bg-white [&_kbd]:border-black/10 [&_kbd]:bg-black/[0.06] [&_kbd]:text-canvas/70',
+      primary: 'bg-ink text-canvas shadow-sm shadow-black/30 hover:bg-tint [&_kbd]:border-black/10 [&_kbd]:bg-black/[0.06] [&_kbd]:text-canvas/70',
       secondary: 'border border-line bg-surface text-ink hover:border-line-strong hover:bg-hover',
-      ghost: 'text-muted hover:bg-white/[0.05] hover:text-ink',
+      ghost: 'text-muted hover:bg-tint/[0.05] hover:text-ink',
       danger: 'border border-danger/25 bg-danger/10 text-danger-soft hover:border-danger/40 hover:bg-danger/15',
     }
     return <button ref={ref} className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest} />
@@ -50,10 +50,10 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
 )
 
 /** One surface for everything that floats over the canvas: legend, zoom, hints, toasts. */
-export const floatingSurface = 'border border-white/[0.07] bg-popover/90 shadow-float backdrop-blur-md'
+export const floatingSurface = 'border border-tint/[0.07] glass-popover shadow-float'
 
 export function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="rounded border border-line bg-white/[0.04] px-1.5 py-px font-mono text-label leading-4 text-faint">{children}</kbd>
+  return <kbd className="rounded border border-line bg-tint/[0.04] px-1.5 py-px font-mono text-label leading-4 text-faint">{children}</kbd>
 }
 
 export function StatusPill({ status, detail, compact = false }: { status: Status; detail?: string; compact?: boolean }) {
@@ -87,9 +87,7 @@ export function ProviderMark({ provider, size = 22 }: { provider: string; size?:
       aria-hidden="true"
     >
       {body.logo ? (
-        <svg viewBox="0 0 24 24" width={Math.round(size * 0.56)} height={Math.round(size * 0.56)} fill="rgba(9,9,11,0.8)" aria-hidden="true">
-          <path d={body.logo} fillRule={body.logoRule ?? 'nonzero'} />
-        </svg>
+        <img src={body.logo} alt="" width={Math.round(size * 0.6)} height={Math.round(size * 0.6)} draggable={false} className="block object-contain" />
       ) : (
         body.mark
       )}
@@ -101,9 +99,9 @@ type TagTone = 'neutral' | 'warn' | 'demo' | 'ok'
 
 export function Tag({ children, tone = 'neutral' }: { children: ReactNode; tone?: TagTone }) {
   const tones: Record<TagTone, string> = {
-    neutral: 'border-line bg-white/[0.03] text-muted',
+    neutral: 'border-line bg-tint/[0.03] text-muted',
     warn: 'border-warn/30 bg-warn/10 text-warn-soft',
-    demo: 'border-white/10 border-dashed bg-transparent text-faint',
+    demo: 'border-tint/10 border-dashed bg-transparent text-faint',
     ok: 'border-ok/30 bg-ok/10 text-ok',
   }
   return (
@@ -126,10 +124,16 @@ export function Field({ label, hint, children, htmlFor, icon }: { label: string;
   )
 }
 
+/** A borderless trigger for controls that sit inside another surface, such as the chat composer. */
+export const compactTrigger =
+  'flex h-7 min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-left text-label text-muted outline-none ' +
+  'transition-colors duration-150 hover:bg-row-hover hover:text-ink focus-visible:ring-[3px] focus-visible:ring-tint/[0.08] ' +
+  'aria-expanded:text-ink disabled:cursor-not-allowed disabled:opacity-50'
+
 const fieldClass =
   'w-full rounded-md border border-line bg-surface px-2.5 text-body text-ink placeholder:text-faint ' +
   'outline-none transition-[border-color,box-shadow,background-color] duration-150 hover:border-line-strong ' +
-  'focus:border-white/30 focus:bg-canvas focus:ring-[3px] focus:ring-white/[0.07] ' +
+  'focus:border-tint/30 focus:bg-canvas focus:ring-[3px] focus:ring-tint/[0.07] ' +
   'aria-invalid:border-danger/60 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line'
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className = '', ...rest }, ref) {
@@ -180,6 +184,9 @@ function stepEnabled(options: SelectOption[], from: number, dir: 1 | -1): number
  * is never clipped by a scrolling dialog. Focus stays on the trigger (aria-activedescendant),
  * which keeps the dialog's focus trap working.
  */
+/** The narrowest a Select's open list gets, so short labels such as "Low" still leave room for every option. */
+const SELECT_MIN_LIST_WIDTH = 160
+
 export function Select({
   id,
   value,
@@ -187,8 +194,9 @@ export function Select({
   disabled,
   children,
   className = '',
+  compact = false,
   'aria-label': ariaLabel,
-}: Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size' | 'multiple'>) {
+}: Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size' | 'multiple'> & { compact?: boolean }) {
   const options = useMemo(() => readOptions(children), [children])
   const current = String(value ?? '')
   const selectedIndex = options.findIndex((o) => o.value === current)
@@ -228,7 +236,10 @@ export function Select({
     const r = trigger.getBoundingClientRect()
     const below = window.innerHeight - r.bottom
     const flip = below < list.offsetHeight + 8 && r.top > below
-    setPos({ left: r.left, width: r.width, ...(flip ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }) })
+    // A compact trigger shrinks to its label ("Low"), so the list is never narrower than SELECT_MIN_LIST_WIDTH.
+    const width = Math.max(r.width, SELECT_MIN_LIST_WIDTH)
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
+    setPos({ left, width, ...(flip ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }) })
   }, [open])
 
   // Keep the active option in view.
@@ -329,7 +340,7 @@ export function Select({
         disabled={disabled}
         onClick={() => (open ? setOpen(false) : openList())}
         onKeyDown={onKeyDown}
-        className={`${fieldClass} flex h-8 cursor-pointer items-center justify-between gap-2 pl-2.5 pr-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+        className={`${compact ? compactTrigger : `${fieldClass} flex h-8 cursor-pointer items-center justify-between gap-2 pl-2.5 pr-2 text-left disabled:cursor-not-allowed disabled:opacity-50`} ${className}`}
       >
         <span className="truncate">{selected?.label ?? ''}</span>
         <IconChevronDown size={14} className={`shrink-0 text-faint transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} />
@@ -346,7 +357,7 @@ export function Select({
                 ? { left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, transformOrigin: pos.bottom !== undefined ? 'bottom' : 'top' }
                 : { left: 0, top: 0, visibility: 'hidden' }
             }
-            className="fixed z-[60] max-h-72 overflow-y-auto rounded-lg border border-white/[0.08] bg-popover p-1 shadow-popover animate-menu-in"
+            className="fixed z-[60] max-h-72 overflow-y-auto rounded-lg border border-tint/[0.08] glass-popover p-1 shadow-popover animate-menu-in"
           >
             {options.map((o, i) => (
               <Fragment key={i}>
@@ -366,7 +377,7 @@ export function Select({
                   onClick={() => commit(i)}
                   className={`flex h-8 items-center justify-between gap-2 rounded-md px-2 text-body ${
                     o.disabled ? 'cursor-not-allowed text-faint opacity-50' : 'cursor-pointer text-ink'
-                  } ${i === active ? 'bg-white/[0.07]' : ''}`}
+                  } ${i === active ? 'bg-tint/[0.07]' : ''}`}
                 >
                   <span className="truncate">{o.label}</span>
                   {i === selectedIndex && <IconCheck size={12} className="shrink-0 text-muted" />}
@@ -395,6 +406,7 @@ export function ModelPicker({
   provider,
   defaultLabel,
   disabled,
+  compact = false,
   'aria-label': ariaLabel,
 }: {
   id?: string
@@ -404,6 +416,7 @@ export function ModelPicker({
   provider: string
   defaultLabel: string
   disabled?: boolean
+  compact?: boolean
   'aria-label'?: string
 }) {
   const listId = useId()
@@ -449,7 +462,8 @@ export function ModelPicker({
     if (open) inputRef.current?.focus()
   }, [open])
 
-  // Place the list under the trigger, or above it when there is no room below.
+  // Place the list under the trigger, or above it when there is no room below. The list aligns to the
+  // trigger's right edge and stays inside the window, because the composer often sits near the right edge.
   useLayoutEffect(() => {
     if (!open) return
     const trigger = triggerRef.current
@@ -458,7 +472,10 @@ export function ModelPicker({
     const r = trigger.getBoundingClientRect()
     const below = window.innerHeight - r.bottom
     const flip = below < list.offsetHeight + 8 && r.top > below
-    setPos({ left: r.left, width: Math.max(r.width, 280), ...(flip ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }) })
+    const margin = 8
+    const width = Math.min(Math.max(r.width, 280), window.innerWidth - margin * 2)
+    const left = Math.max(margin, Math.min(r.right - width, window.innerWidth - margin - width))
+    setPos({ left, width, ...(flip ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }) })
   }, [open])
 
   useEffect(() => {
@@ -537,7 +554,11 @@ export function ModelPicker({
             openList()
           }
         }}
-        className={`${fieldClass} flex h-8 cursor-pointer items-center justify-between gap-2 pl-2.5 pr-2 text-left disabled:cursor-not-allowed disabled:opacity-50`}
+        className={
+          compact
+            ? `${compactTrigger} max-w-full`
+            : `${fieldClass} flex h-8 cursor-pointer items-center justify-between gap-2 pl-2.5 pr-2 text-left disabled:cursor-not-allowed disabled:opacity-50`
+        }
       >
         <span className="flex min-w-0 items-center gap-2">
           <ProviderMark provider={provider} size={14} />
@@ -551,7 +572,7 @@ export function ModelPicker({
             ref={listRef}
             data-listbox-open=""
             style={pos ? { left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom } : { left: 0, top: 0, visibility: 'hidden' }}
-            className="fixed z-[60] flex max-h-96 flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-popover shadow-popover animate-fade-in"
+            className="fixed z-[60] flex max-h-96 flex-col overflow-hidden rounded-xl border border-tint/[0.08] glass-popover shadow-popover animate-fade-in"
           >
             <div className="flex items-center gap-2 border-b border-line px-3 py-2">
               <IconSearch size={13} className="shrink-0 text-faint" />
@@ -673,7 +694,7 @@ function ModelRow({
 export function Spinner({ label }: { label?: string }) {
   return (
     <span className="inline-flex items-center gap-2 text-muted" role="status">
-      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/15 border-t-white/70 motion-reduce:animate-none" />
+      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-tint/15 border-t-tint/70 motion-reduce:animate-none" />
       {label && <span className="text-caption">{label}</span>}
     </span>
   )
@@ -753,13 +774,13 @@ export function Dialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <div className="dialog-scrim absolute inset-0 animate-fade-in bg-black/60 backdrop-blur-[3px] motion-reduce:animate-none" onClick={onClose} aria-hidden="true" />
+      <div className="dialog-scrim absolute inset-0 animate-fade-in bg-black/40 motion-reduce:animate-none" onClick={onClose} aria-hidden="true" />
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`dialog-panel relative flex max-h-[86vh] w-full ${width} animate-dialog-in flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-popover shadow-popover motion-reduce:animate-none`}
+        className={`dialog-panel relative flex max-h-[86vh] w-full ${width} animate-dialog-in flex-col overflow-hidden rounded-xl border border-tint/[0.08] glass-popover shadow-popover motion-reduce:animate-none`}
       >
         <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-3.5">
           <div className="min-w-0">

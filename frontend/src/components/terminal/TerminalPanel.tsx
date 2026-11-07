@@ -48,20 +48,32 @@ function savedHeight(): number {
   }
 }
 
+const DARK_TERMINAL = {
+  background: '#0d0d0f',
+  foreground: '#e4e4e7',
+  cursor: '#f4f4f5',
+  cursorAccent: '#0d0d0f',
+  selectionBackground: 'rgb(244 244 245 / 0.16)',
+}
+
+const LIGHT_TERMINAL = {
+  background: '#ffffff',
+  foreground: '#27272a',
+  cursor: '#18181b',
+  cursorAccent: '#ffffff',
+  selectionBackground: 'rgb(24 24 27 / 0.14)',
+}
+
 function newTerminal(): Terminal {
+  // The tint is black on light themes (lib/settings.ts), so it tells us which palette to draw.
+  const light = typeof document !== 'undefined' && getComputedStyle(document.documentElement).getPropertyValue('--color-tint').trim() === '#000000'
   return new Terminal({
     cursorBlink: true,
     fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, monospace',
     fontSize: 12,
     lineHeight: 1.2,
     scrollback: 5000,
-    theme: {
-      background: '#0d0d0f',
-      foreground: '#e4e4e7',
-      cursor: '#f4f4f5',
-      cursorAccent: '#0d0d0f',
-      selectionBackground: 'rgb(244 244 245 / 0.16)',
-    },
+    theme: light ? LIGHT_TERMINAL : DARK_TERMINAL,
   })
 }
 
@@ -235,7 +247,7 @@ export function TerminalPanel() {
   return (
     <section
       aria-label="Terminal"
-      className="relative flex shrink-0 flex-col border-t border-line bg-sidebar"
+      className="relative flex shrink-0 flex-col border-t border-line glass-main"
       style={{ height: open ? clampHeight(height) : CLOSED_HEIGHT }}
     >
       {open && (
@@ -255,7 +267,7 @@ export function TerminalPanel() {
           onKeyDown={onResizeKey}
           className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize touch-none items-center justify-center outline-none"
         >
-          <span className="h-0.5 w-10 rounded-full bg-white/0 transition-colors duration-150 group-hover:bg-white/25 group-focus-visible:bg-white/40 group-active:bg-white/50" />
+          <span className="h-0.5 w-10 rounded-full bg-tint/0 transition-colors duration-150 group-hover:bg-tint/25 group-focus-visible:bg-tint/40 group-active:bg-tint/50" />
         </div>
       )}
       {open ? (
@@ -265,7 +277,7 @@ export function TerminalPanel() {
               <div
                 key={t.id}
                 className={`flex h-7 shrink-0 items-center gap-1 rounded-md pl-2.5 pr-1 text-caption ${
-                  t.id === current?.id ? 'bg-white/[0.07] text-ink' : 'text-muted hover:bg-white/[0.04] hover:text-ink'
+                  t.id === current?.id ? 'bg-tint/[0.07] text-ink' : 'text-muted hover:bg-tint/[0.04] hover:text-ink'
                 }`}
               >
                 <button
@@ -282,7 +294,7 @@ export function TerminalPanel() {
                   type="button"
                   aria-label={`Close ${t.title}`}
                   onClick={() => closeTab(t.id)}
-                  className="flex h-5 w-5 items-center justify-center rounded text-faint hover:bg-white/10 hover:text-ink"
+                  className="flex h-5 w-5 items-center justify-center rounded text-faint hover:bg-tint/10 hover:text-ink"
                 >
                   <IconX size={10} />
                 </button>
@@ -313,7 +325,7 @@ export function TerminalPanel() {
             type="button"
             onClick={toggle}
             aria-label="Open terminal"
-            className="flex items-center gap-2 rounded-md px-2 py-1 text-caption text-muted hover:bg-white/[0.05] hover:text-ink"
+            className="flex items-center gap-2 rounded-md px-2 py-1 text-caption text-muted hover:bg-tint/[0.05] hover:text-ink"
           >
             Terminal
             <Kbd>Ctrl</Kbd>

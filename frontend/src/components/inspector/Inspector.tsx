@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
-import { useStore, setInspectorTab, selectAgent, openDialog, toast, type InspectorTab } from '../../lib/store'
-import { INSPECTOR_DEFAULT, INSPECTOR_MAX, INSPECTOR_MIN, clampInspectorWidth, loadInspectorWidth, saveInspectorWidth } from '../../lib/inspectorPrefs'
+import { useStore, setFocusMode, setInspectorTab, selectAgent, openDialog, toast, toggleGalaxyBesideChat, type InspectorTab } from '../../lib/store'
+import { INSPECTOR_DEFAULT, INSPECTOR_MAX, INSPECTOR_MIN, clampInspectorWidth, loadInspectorWidth, saveInspectorWidth, toggleInspectorWidth } from '../../lib/inspectorPrefs'
 import { loadDetail, renameAgent, resumeAgent, stopAgent } from '../../lib/actions'
 import { baseName, dirName, elapsed, plural, tokens, timeAgo, usd } from '../../lib/format'
 import { STATUS_COLOR } from '../../lib/theme'
 import type { AgentSummary, Capabilities, FileActivity, Usage } from '../../types'
 import { Button, IconAlert, IconChat, IconFiles, IconInfo, IconPencil, IconPlay, IconStop, IconTrash, IconX, ProviderMark, StatusPill, Tag, type IconProps } from '../ui'
+import { FileIcon } from '../ui/FileIcon'
 import { ChatTab } from './ChatTab'
-import { IconBranch, IconRetry } from './inspectorIcons'
+import { IconBranch, IconCollapse, IconExpand, IconGalaxy, IconMaximize, IconMinimize, IconRetry } from './inspectorIcons'
 import { GitTab } from './GitTab'
 import { VirtualList } from './VirtualList'
 
@@ -72,7 +73,11 @@ export function Inspector() {
   const selectedId = useStore((s) => s.selectedId)
   const open = useStore((s) => s.inspectorOpen)
   const tab = useStore((s) => s.inspectorTab)
+  const focusMode = useStore((s) => s.focusMode)
+  const galaxyBesideChat = useStore((s) => s.galaxyBesideChat)
   const selectedAgent = useStore((s) => (s.selectedId ? s.agents[s.selectedId] : undefined))
+  // In focus mode the chat fills the main area. Showing the galaxy again gives the chat back its own width.
+  const fill = focusMode && open && !galaxyBesideChat
 
   // Keep the last agent around while the panel animates closed, so it does not blank out mid-transition.
   const lastAgent = useRef<AgentSummary | undefined>(undefined)
@@ -133,10 +138,10 @@ export function Inspector() {
   return (
     <aside
       ref={panelRef}
-      className={`relative h-full shrink-0 overflow-hidden border-l bg-sidebar motion-reduce:transition-none ${
+      className={`relative h-full overflow-hidden border-l glass-main motion-reduce:transition-none ${fill ? 'min-w-0 flex-1' : 'shrink-0'} ${
         resizing ? '' : 'transition-[width,opacity] duration-200 ease-out'
       } ${shown ? 'border-line opacity-100' : 'border-l-transparent opacity-0'}`}
-      style={{ width: shown ? 'var(--inspector-w)' : 0, '--inspector-w': `${width}px` } as CSSProperties}
+      style={{ width: fill ? undefined : shown ? 'var(--inspector-w)' : 0, '--inspector-w': `${width}px` } as CSSProperties}
       aria-label={`Inspector for ${agent.name}`}
       aria-hidden={!shown}
     >
@@ -147,7 +152,8 @@ export function Inspector() {
         aria-valuemin={INSPECTOR_MIN}
         aria-valuemax={INSPECTOR_MAX}
         aria-valuenow={width}
-        tabIndex={shown ? 0 : -1}
+        tabIndex={shown && !fill ? 0 : -1}
+        hidden={fill}
         title="Drag to resize. Double-click to reset."
         onPointerDown={resizeDown}
         onPointerMove={resizeMove}
@@ -157,10 +163,17 @@ export function Inspector() {
         onKeyDown={resizeKey}
         className="group/resize absolute inset-y-0 left-0 z-10 flex w-2 cursor-col-resize touch-none justify-center outline-none"
       >
-        <span className="h-full w-px bg-transparent transition-colors duration-150 group-hover/resize:bg-white/40 group-focus-visible/resize:bg-white/50 group-active/resize:bg-white/60" />
+        <span className="h-full w-px bg-transparent transition-colors duration-150 group-hover/resize:bg-tint/40 group-focus-visible/resize:bg-tint/50 group-active/resize:bg-tint/60" />
       </div>
-      <div className="flex h-full flex-col" style={{ width: 'var(--inspector-w)' }}>
-        <Header agent={agent} />
+      <div className="flex h-full flex-col" style={{ width: fill ? '100%' : 'var(--inspector-w)' }}>
+        <Header
+          agent={agent}
+          fill={fill}
+          focusMode={focusMode}
+          galaxyBesideChat={galaxyBesideChat}
+          expanded={width >= INSPECTOR_MAX - 8}
+          onToggleWidth={() => commitWidth(toggleInspectorWidth(width))}
+        />
 
         {/* The tab bar is a container, so labels depend on the inspector's own width, which the user resizes. */}
         <div role="tablist" aria-label="Inspector sections" className="@container relative flex min-w-0 shrink-0 items-center gap-0.5 border-b border-line px-3" onKeyDown={onTabKey}>
@@ -181,14 +194,14 @@ export function Inspector() {
                 aria-label={t.label}
                 title={t.label}
                 className={`group relative -mb-px flex h-9 shrink-0 items-center gap-1.5 rounded-t-md transition-colors duration-150 ${
-                  selected ? 'px-2.5 text-caption font-medium text-ink' : 'px-2 text-caption text-muted hover:bg-white/[0.04] hover:text-ink'
+                  selected ? 'px-2.5 text-caption font-medium text-ink' : 'px-2 text-caption text-muted hover:bg-tint/[0.04] hover:text-ink'
                 }`}
               >
                 <span className={`flex transition-colors duration-150 ${selected ? 'text-ink' : 'text-muted group-hover:text-ink'}`}>{TAB_ICONS[t.id]({ size: 14 })}</span>
                 {/* The selected tab always names itself. The others name themselves only when the bar is wide enough for every label and count. */}
                 <span className={selected ? '' : 'hidden @[440px]:inline'}>{t.label}</span>
                 {counts[t.id] !== undefined && counts[t.id]! > 0 && (
-                  <span className={`rounded px-1 font-mono text-label leading-4 tabular-nums ${selected ? 'bg-white/[0.08] text-muted' : 'bg-white/[0.05] text-faint'}`}>
+                  <span className={`rounded px-1 font-mono text-label leading-4 tabular-nums ${selected ? 'bg-tint/[0.08] text-muted' : 'bg-tint/[0.05] text-faint'}`}>
                     {counts[t.id]}
                   </span>
                 )}
@@ -288,7 +301,22 @@ function withDefaults(a: AgentSummary): AgentSummary {
 
 // ---- header ---------------------------------------------------------------------
 
-function Header({ agent }: { agent: AgentSummary }) {
+function Header({
+  agent,
+  fill,
+  focusMode,
+  galaxyBesideChat,
+  expanded,
+  onToggleWidth,
+}: {
+  agent: AgentSummary
+  /** The chat fills the main area, so the panel width does not apply. */
+  fill: boolean
+  focusMode: boolean
+  galaxyBesideChat: boolean
+  expanded: boolean
+  onToggleWidth: () => void
+}) {
   const caps = agent.capabilities
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(agent.name)
@@ -327,7 +355,7 @@ function Header({ agent }: { agent: AgentSummary }) {
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={onNameKey}
                 onBlur={() => finishEdit(true)}
-                className="min-w-0 flex-1 rounded-md border border-line-strong bg-surface px-2 py-0.5 text-title font-semibold tracking-[-0.01em] text-ink outline-none focus:border-white/40"
+                className="min-w-0 flex-1 rounded-md border border-line-strong bg-surface px-2 py-0.5 text-title font-semibold tracking-[-0.01em] text-ink outline-none focus:border-tint/40"
               />
             ) : (
               <>
@@ -343,9 +371,48 @@ function Header({ agent }: { agent: AgentSummary }) {
             {agent.model ? <span className="font-mono text-faint"> · {agent.model}</span> : null}
           </p>
         </div>
-        <Button variant="ghost" size="sm" aria-label="Close inspector" onClick={() => selectAgent(null)} className="-mr-1.5 h-7 w-7 shrink-0 rounded-md px-0">
-          <IconX size={14} />
-        </Button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {focusMode && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={galaxyBesideChat ? 'Hide galaxy' : 'Show galaxy'}
+              aria-pressed={galaxyBesideChat}
+              title={galaxyBesideChat ? 'Hide the galaxy' : 'Show the galaxy beside this conversation'}
+              onClick={toggleGalaxyBesideChat}
+              className={`h-7 rounded-md px-2 text-caption ${galaxyBesideChat ? 'text-ink' : 'text-muted'}`}
+            >
+              <IconGalaxy size={13} />
+              Galaxy
+            </Button>
+          )}
+          {!fill && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={expanded ? 'Narrow chat panel' : 'Widen chat panel'}
+              title={expanded ? `Narrow panel to ${INSPECTOR_DEFAULT}px` : `Widen panel to ${INSPECTOR_MAX}px`}
+              onClick={onToggleWidth}
+              className="h-7 w-7 rounded-md px-0 text-faint"
+            >
+              {expanded ? <IconCollapse size={14} /> : <IconExpand size={14} />}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={focusMode ? 'Exit focus mode' : 'Focus conversation'}
+            aria-pressed={focusMode}
+            title={focusMode ? 'Exit focus mode (Esc)' : 'Focus: full-width conversation (double-click a planet)'}
+            onClick={() => setFocusMode(!focusMode)}
+            className="h-7 w-7 rounded-md px-0 text-faint"
+          >
+            {focusMode ? <IconMinimize size={14} /> : <IconMaximize size={14} />}
+          </Button>
+          <Button variant="ghost" size="sm" aria-label="Close inspector" onClick={() => selectAgent(null)} className="-mr-1.5 h-7 w-7 shrink-0 rounded-md px-0">
+            <IconX size={14} />
+          </Button>
+        </div>
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -555,6 +622,7 @@ function FilesTab({
               {f.state === 'writing' && <span className="absolute inset-0 animate-ping rounded-full opacity-60 motion-reduce:animate-none" style={{ background: color }} />}
               <span className="relative h-2 w-2 rounded-full" style={{ background: color }} />
             </span>
+            <FileIcon path={f.path} />
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-2">
                 <span className="truncate text-body font-medium text-ink">{baseName(f.path)}</span>

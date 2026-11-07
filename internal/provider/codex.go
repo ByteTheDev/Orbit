@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"orbit/internal/browser"
 	"orbit/internal/model"
 )
 
@@ -43,7 +42,7 @@ func (Codex) Capabilities() model.Capabilities {
 			{ID: "read-only", Label: "Read only", Description: "Can read the repository but not change it."},
 			{ID: "danger-full-access", Label: "Full access", Description: "No sandbox. Can edit files and run any command, including outside the repository."},
 		},
-		Models: codexModels,
+		Models: codexModelsForAccount(),
 	}
 }
 
@@ -54,7 +53,11 @@ func (c Codex) Run(ctx context.Context, spec Spec, emit func(Update)) error {
 		return errors.New("Codex CLI is not installed or not on PATH")
 	}
 	parser := &codexParser{}
-	return runProcess(ctx, procSpec{Bin: d.Path, Args: codexArgs(spec), Dir: spec.RepoPath, Stdin: spec.Prompt}, parser.parse, emit)
+	ps := procSpec{Bin: d.Path, Args: codexArgs(spec), Dir: spec.RepoPath, Stdin: spec.Prompt}
+	if spec.BrowserCommand != "" {
+		ps.Env = append(ps.Env, "ORBIT_BROWSER_MCP=1")
+	}
+	return runProcess(ctx, ps, parser.parse, emit)
 }
 
 // codexArgs builds the Codex command line for one turn.
@@ -87,8 +90,10 @@ func appendCodexBrowser(args []string, spec Spec) []string {
 	if spec.BrowserCommand == "" {
 		return args
 	}
-	args = append(args, "-c", "mcp_servers."+browserServerName+".command="+tomlString(spec.BrowserCommand))
-	return append(args, "-c", "mcp_servers."+browserServerName+`.args=["`+browser.MCPFlag+`"]`)
+	// The browser MCP server is started with ORBIT_BROWSER_MCP=1 in the process
+	// environment (see Run), so no --browser-mcp argument has to be passed. Codex's
+	// -c override does not parse nested string arrays, which broke every Codex turn.
+	return append(args, "-c", "mcp_servers."+browserServerName+".command="+tomlString(spec.BrowserCommand))
 }
 
 // tomlString quotes s as a TOML basic string.
@@ -116,6 +121,12 @@ func appendCodexEffort(args []string, spec Spec) []string {
 // appendCodexFast asks Codex for its fast service tier on this turn only. It is a
 // per-run config override, so the user's config.toml is not changed.
 func appendCodexFast(args []string, spec Spec) []string {
+	if spec.UltraFast {
+		// The account's own tier id for ultrafast, as the models cache names it.
+		if tier := ultraTierLookup(spec.Model); tier != "" {
+			return append(args, "-c", `service_tier="`+tier+`"`)
+		}
+	}
 	if spec.FastMode {
 		args = append(args, "-c", `service_tier="fast"`)
 	}
@@ -187,6 +198,9 @@ func (p *codexParser) parse(line []byte) []Update {
 		return append(out, Update{Kind: UpdTurnDone, Success: true})
 	case "turn.failed":
 		msg := codexErrorText(ev.Error)
+		if msg == "" {
+			msg = strings.TrimSpace(ev.Message)
+		}
 		if msg == "" {
 			msg = "The turn failed."
 		}

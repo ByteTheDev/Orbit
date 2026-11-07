@@ -1,16 +1,21 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { refreshLimits } from '../lib/actions'
 import { useStore } from '../lib/store'
 import { percentLeft, resetLabel, USAGE_PROVIDERS } from '../lib/usage'
 import type { ProviderLimits } from '../types'
+import { IconRetry } from './inspector/inspectorIcons'
 import { ProviderMark } from './ui'
 
-/** How often the open window re-reads the limits. The backend caches for a similar time, so this is cheap. */
+/**
+ * How often the open window re-reads the limits. It matches the backend cache (limitsTTL), so each
+ * poll either gets a fresh reading or the cached one it would have had anyway.
+ */
 const LIMITS_POLL_MS = 3 * 60 * 1000
 
 /** Each provider's name with how much of its 5-hour and weekly allowance is left. Always visible. */
 export function UsageBar() {
   const limits = useStore((s) => s.limits)
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     void refreshLimits(false)
@@ -18,8 +23,18 @@ export function UsageBar() {
     return () => clearInterval(timer)
   }, [])
 
+  // Asks the CLIs now, bypassing the backend cache. refreshLimits reports failures as toasts itself.
+  const refresh = async () => {
+    setRefreshing(true)
+    try {
+      await refreshLimits(true)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   return (
-    <footer aria-label="Provider usage" className="flex h-7 shrink-0 items-center gap-5 overflow-x-auto border-t border-line bg-sidebar px-3 text-label text-muted">
+    <footer aria-label="Provider usage" className="flex h-7 shrink-0 items-center gap-5 overflow-x-auto border-t border-line glass-sidebar px-3 text-label text-muted">
       {USAGE_PROVIDERS.map((p) => (
         <span key={p.id} className="flex shrink-0 items-center gap-1.5 tabular-nums">
           <ProviderMark provider={p.id} size={14} />
@@ -27,6 +42,16 @@ export function UsageBar() {
           <LimitsSummary limits={limits.find((l) => l.provider === p.id)} />
         </span>
       ))}
+      <button
+        type="button"
+        onClick={() => void refresh()}
+        disabled={refreshing}
+        aria-label="Refresh usage"
+        title="Refresh usage now (also refreshes every 3 minutes)"
+        className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-faint transition-colors duration-150 hover:bg-row-hover hover:text-ink disabled:opacity-60"
+      >
+        <IconRetry size={11} className={refreshing ? 'animate-spin motion-reduce:animate-none' : undefined} />
+      </button>
     </footer>
   )
 }

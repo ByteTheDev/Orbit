@@ -24,6 +24,7 @@ export interface FileDiffResult {
 export interface Snapshot {
     "projects": model$0.ProjectSummary[] | null;
     "agents": model$0.AgentSummary[] | null;
+    "automations": model$0.Automation[] | null;
     "providers": provider$0.Info[] | null;
     "statePath": string;
     "storageError": string;

@@ -26,12 +26,18 @@ export interface AgentDetail {
     "providerName": string;
     "model": string;
     "task": string;
+
+    /**
+     * Branch is the git branch the agent works on, when it has its own worktree or was launched on one.
+     */
+    "branch"?: string;
     "permissionMode": string;
     "status": Status;
     "statusDetail": string;
     "sessionId": string;
     "running": boolean;
     "fastMode": boolean;
+    "ultraFast": boolean;
 
     /**
      * Effort is the thinking effort level for this agent's turns. Empty means the CLI default.
@@ -82,12 +88,18 @@ export interface AgentSummary {
     "providerName": string;
     "model": string;
     "task": string;
+
+    /**
+     * Branch is the git branch the agent works on, when it has its own worktree or was launched on one.
+     */
+    "branch"?: string;
     "permissionMode": string;
     "status": Status;
     "statusDetail": string;
     "sessionId": string;
     "running": boolean;
     "fastMode": boolean;
+    "ultraFast": boolean;
 
     /**
      * Effort is the thinking effort level for this agent's turns. Empty means the CLI default.
@@ -130,6 +142,78 @@ export interface Attachment {
     "id": string;
     "name": string;
     "mediaType": string;
+}
+
+/**
+ * Automation launches an agent on a schedule: on the chosen weekdays, at a local time of day.
+ * It runs only while Orbit is open. A run that was due while Orbit was closed is skipped, not caught up.
+ */
+export interface Automation {
+    "id": string;
+    "name": string;
+    "projectId": string;
+
+    /**
+     * Enabled turns the schedule on. A disabled automation keeps its settings but never fires.
+     */
+    "enabled": boolean;
+
+    /**
+     * Days are the weekdays to run on: 0 is Sunday through 6 is Saturday. Kept sorted and without duplicates.
+     */
+    "days": number[] | null;
+
+    /**
+     * Time is the local time of day, 24-hour "HH:MM".
+     */
+    "time": string;
+
+    /**
+     * Provider, Model, PermissionMode and Task describe the agent each run launches. An empty model uses the
+     * provider's default, and an empty mode uses the provider's first.
+     */
+    "provider": string;
+    "model": string;
+    "permissionMode": string;
+    "task": string;
+    "createdAt": number;
+
+    /**
+     * LastRunAt is the scheduled time (Unix ms) of the last slot that was handled, whether it launched or was skipped.
+     * Before the first run it is the time the automation was saved, so earlier slots never fire.
+     */
+    "lastRunAt": number;
+
+    /**
+     * LastError is why the last run could not start its agent. Empty after a successful run.
+     */
+    "lastError": string;
+
+    /**
+     * NextRunAt is the next scheduled time (Unix ms). Computed when listed, and 0 when disabled.
+     */
+    "nextRunAt": number;
+}
+
+/**
+ * AgentRecord is the complete, persisted state of one agent.
+ * BranchInfo is what the launch dialog needs to offer a project's branches.
+ */
+export interface BranchInfo {
+    /**
+     * Current is the branch checked out in the project folder. Empty when HEAD is detached.
+     */
+    "current": string;
+
+    /**
+     * Branches are the local branches, sorted by name.
+     */
+    "branches": string[] | null;
+
+    /**
+     * WorktreeRoot is the folder new worktrees for this project are created in.
+     */
+    "worktreeRoot": string;
 }
 
 /**
@@ -188,9 +272,27 @@ export interface Conversation {
     "nextId": string;
     "replies": number;
     "maxReplies": number;
+
+    /**
+     * Members are the agents in the talk, in speaking order. AgentAID and AgentBID are the first two.
+     */
+    "members": string[] | null;
+    "lines": ConversationLine[] | null;
     "error"?: string;
     "at": number;
     "doneAt"?: number;
+}
+
+/**
+ * ConversationLine is one message in a talk: the opening topic (AgentID empty, from the user) or one
+ * agent's reply. Text has its [[DONE]] marker removed.
+ */
+export interface ConversationLine {
+    "agentId": string;
+    "name": string;
+    "provider": string;
+    "text": string;
+    "at": number;
 }
 
 /**
@@ -309,6 +411,11 @@ export interface ModelOption {
     "fastMode": boolean;
 
     /**
+     * UltraFast is true when the signed-in account can run this model in ultrafast mode.
+     */
+    "ultraFast": boolean;
+
+    /**
      * Effort lists the thinking effort levels this model accepts, lowest first. Empty means the
      * model has no effort control.
      */
@@ -399,6 +506,37 @@ export interface ReleaseInfo {
     "publishedAt": number;
     "notes": string;
     "url": string;
+}
+
+/**
+ * SSHAuthMethod is how an SSH profile authenticates.
+ */
+export enum SSHAuthMethod {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    SSHAuthPassword = "password",
+    SSHAuthKey = "key",
+    SSHAuthAgent = "agent",
+};
+
+/**
+ * SSHProfile is one saved SSH connection. Secrets (passwords, passphrases) are stored
+ * alongside the rest of Orbit's state, which is user-local.
+ */
+export interface SSHProfile {
+    "id": string;
+    "name": string;
+    "host": string;
+    "port": number;
+    "user": string;
+    "auth": SSHAuthMethod;
+    "password"?: string;
+    "keyPath"?: string;
+    "passphrase"?: string;
+    "createdAt": number;
 }
 
 /**

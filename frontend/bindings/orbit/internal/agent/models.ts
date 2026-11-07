@@ -18,7 +18,20 @@ export interface LaunchRequest {
     "fastMode": boolean;
 
     /**
+     * UltraFast runs the agent in the account's ultrafast mode. It implies FastMode, and is only valid
+     * for a model the account can run that way.
+     */
+    "ultraFast": boolean;
+
+    /**
      * Effort is the thinking effort level. Empty uses the CLI default. Must be one the model offers.
      */
     "effort": string;
+
+    /**
+     * Branch is the git branch to work on. Empty uses the project folder as it is. With NewBranch
+     * set, Branch names a new branch to create from HEAD.
+     */
+    "branch": string;
+    "newBranch": boolean;
 }

@@ -16,7 +16,7 @@ import { canGoBack, canGoForward, currentPage, emptyHistory, goBack, goForward, 
 import { addressParts, landed, physicalBounds, type Intent } from '../../lib/browserPane'
 import { onBrowserPane, type BrowserPaneState } from '../../lib/bridge'
 import type { BrowserPage } from '../../types'
-import { Button, Dialog, EmptyState, IconAlert, IconGlobe, IconInfo, IconShield, IconStop, Input, Spinner } from '../ui'
+import { Button, Dialog, EmptyState, IconAlert, IconGlobe, IconInfo, IconShield, IconStop, Input, MaterialIcon, Spinner } from '../ui'
 
 /** How long the dialog's entrance takes. The native view appears after it, so it does not slide. */
 const ENTRANCE_MS = 280
@@ -379,7 +379,7 @@ function ToolButton({ label, disabled, onClick, children }: { label: string; dis
       title={label}
       disabled={disabled}
       onClick={onClick}
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted transition-colors duration-150 hover:bg-white/[0.06] hover:text-ink disabled:pointer-events-none disabled:opacity-35"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted transition-colors duration-150 hover:bg-tint/[0.06] hover:text-ink disabled:pointer-events-none disabled:opacity-35"
     >
       {children}
     </button>
@@ -387,17 +387,9 @@ function ToolButton({ label, disabled, onClick, children }: { label: string; dis
 }
 
 function ArrowIcon({ direction }: { direction: 'left' | 'right' }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {direction === 'left' ? <path d="M19 12H5M12 19l-7-7 7-7" /> : <path d="M5 12h14M12 5l7 7-7 7" />}
-    </svg>
-  )
+  return <MaterialIcon name={direction === 'left' ? 'arrow_back' : 'arrow_forward'} size={14} />
 }
 
 function ReloadIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
-    </svg>
-  )
+  return <MaterialIcon name="refresh" size={14} />
 }

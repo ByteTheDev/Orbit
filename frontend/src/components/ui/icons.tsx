@@ -1,234 +1,78 @@
-import type { ReactNode, SVGProps } from 'react'
+import type { CSSProperties } from 'react'
 
 /*
- * Orbit's own icon set: 24px grid, 1.7 stroke, round caps. Drawn here, not taken from
- * anyone else. Icons inherit `currentColor`, so they follow the text colour they sit in.
+ * Orbit's UI icons are Google's Material Symbols (Rounded), installed locally from
+ * @fontsource so they work offline. Each export keeps its old name, so call sites don't change.
+ * Provider and brand marks (Claude, Codex, Pi, OMP, OpenCode, Orbit's logo) are not here.
  */
 
-export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'children'> {
+export interface IconProps {
   size?: number
+  className?: string
+  style?: CSSProperties
 }
 
-function Icon({ size = 16, children, ...rest }: IconProps & { children: ReactNode }) {
+/** One Material Symbols glyph, by its ligature name (for example "add" or "settings"). */
+export function MaterialIcon({ name, size = 16, className = '', style }: IconProps & { name: string }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.7}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+    <span
       aria-hidden="true"
-      focusable="false"
-      className={`shrink-0 ${rest.className ?? ''}`}
-      {...rest}
+      className={`material-symbols-rounded ${className}`}
+      style={{ width: size, height: size, fontSize: size, ...style }}
     >
-      {children}
-    </svg>
+      {name}
+    </span>
   )
 }
 
-export const IconPlus = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M12 5v14M5 12h14" />
-  </Icon>
-)
+/**
+ * The on/off knob of every switch: Google's toggle glyph, filled when on and outlined when off.
+ * The parent button is the switch (role="switch"); this only draws its state.
+ */
+export function SwitchGlyph({ on, size = 36 }: { on: boolean; size?: number }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`material-symbols-rounded ${on ? 'text-ink' : 'text-faint'}`}
+      style={{ fontSize: size, fontVariationSettings: on ? '"FILL" 1' : '"FILL" 0' }}
+    >
+      {on ? 'toggle_on' : 'toggle_off'}
+    </span>
+  )
+}
 
-export const IconX = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M6 6l12 12M18 6L6 18" />
-  </Icon>
-)
+const icon = (name: string) => (p: IconProps) => <MaterialIcon name={name} {...p} />
 
-export const IconGrid = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
-    <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
-    <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
-    <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
-  </Icon>
-)
-
-export const IconMinus = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M5 12h14" />
-  </Icon>
-)
-
-export const IconFolder = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.7l2 2.2h7.3A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" />
-  </Icon>
-)
-
-export const IconPlay = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M8 5.5v13l10.5-6.5z" fill="currentColor" fillOpacity="0.9" />
-  </Icon>
-)
-
-export const IconPencil = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M4 20h4L19 9l-4-4L4 16z" />
-    <path d="M13.5 6.5l4 4" />
-  </Icon>
-)
-
-export const IconCpu = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="6.5" y="6.5" width="11" height="11" rx="2.2" />
-    <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
-    <path d="M9.5 2.5v4M14.5 2.5v4M9.5 17.5v4M14.5 17.5v4M2.5 9.5h4M2.5 14.5h4M17.5 9.5h4M17.5 14.5h4" />
-  </Icon>
-)
-
-export const IconShield = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M12 3.2l7.5 2.8v5.6c0 4.4-3.1 8-7.5 9.2-4.4-1.2-7.5-4.8-7.5-9.2V6z" />
-    <path d="M9 12l2.2 2.2L15.5 10" />
-  </Icon>
-)
-
-export const IconEye = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
-    <circle cx="12" cy="12" r="2.8" />
-  </Icon>
-)
-
-export const IconUnlock = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="5" y="10.5" width="14" height="10" rx="2.2" />
-    <path d="M8 10.5V7.5a4 4 0 0 1 7.7-1.5" />
-  </Icon>
-)
-
-export const IconText = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M4 6.5h16M4 12h10M4 17.5h7" />
-  </Icon>
-)
-
-export const IconChevronDown = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M6 9.5l6 6 6-6" />
-  </Icon>
-)
-
-export const IconCheck = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M5 12.5l4.5 4.5L19 7.5" />
-  </Icon>
-)
-
-export const IconSearch = (p: IconProps) => (
-  <Icon {...p}>
-    <circle cx="11" cy="11" r="6.5" />
-    <path d="M16 16l4 4" />
-  </Icon>
-)
-
-export const IconKeyboard = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="2.5" y="6" width="19" height="12" rx="2.5" />
-    <path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7 14h10" />
-  </Icon>
-)
-
-export const IconSettings = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
-    <circle cx="15" cy="7" r="2" />
-    <circle cx="9" cy="17" r="2" />
-  </Icon>
-)
-
-export const IconFit = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M4 9V4.5h4.5M15.5 4.5H20V9M20 15v4.5h-4.5M8.5 19.5H4V15" />
-  </Icon>
-)
-
-export const IconStop = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor" fillOpacity="0.9" />
-  </Icon>
-)
-
-/** A stop square inside a ring: the composer's stop button. */
-export const IconStopCircle = (p: IconProps) => (
-  <Icon {...p}>
-    <circle cx="12" cy="12" r="8.5" />
-    <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none" />
-  </Icon>
-)
-
-export const IconTrash = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5" />
-  </Icon>
-)
-
-export const IconInfo = (p: IconProps) => (
-  <Icon {...p}>
-    <circle cx="12" cy="12" r="8.5" />
-    <path d="M12 11v5M12 8h.01" />
-  </Icon>
-)
-
-export const IconChat = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M4.5 5.5h15v10h-9l-4.5 3.5v-3.5h-1.5z" />
-  </Icon>
-)
-
-export const IconFiles = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2.2h8A1.5 1.5 0 0 1 20.5 8.7v9.8A1.5 1.5 0 0 1 19 20H5a1.5 1.5 0 0 1-1.5-1.5z" />
-  </Icon>
-)
-
-export const IconTarget = (p: IconProps) => (
-  <Icon {...p}>
-    <circle cx="12" cy="12" r="7.5" />
-    <circle cx="12" cy="12" r="2.5" />
-    <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" />
-  </Icon>
-)
-
-export const IconResume = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" />
-    <path d="M4.5 4.5v4h4" />
-  </Icon>
-)
-
-export const IconAlert = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M12 4l8.5 15h-17z" />
-    <path d="M12 10v4M12 17h.01" />
-  </Icon>
-)
-
-export const IconSidebar = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="3" y="4.5" width="18" height="15" rx="3" />
-    <path d="M9.5 4.5v15" />
-  </Icon>
-)
-
-export const IconInspect = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
-    <path d="M14.5 4.5v15M7 9.5h4M7 13h4" />
-  </Icon>
-)
-
-export const IconGlobe = (p: IconProps) => (
-  <Icon {...p}>
-    <circle cx="12" cy="12" r="8.5" />
-    <path d="M3.5 12h17M12 3.5c2.4 2.5 3.6 5.3 3.6 8.5s-1.2 6-3.6 8.5c-2.4-2.5-3.6-5.3-3.6-8.5s1.2-6 3.6-8.5z" />
-  </Icon>
-)
+export const IconPlus = icon('add')
+export const IconX = icon('close')
+export const IconClock = icon('schedule')
+export const IconGrid = icon('grid_view')
+export const IconMinus = icon('remove')
+export const IconFolder = icon('folder')
+export const IconPlay = icon('play_arrow')
+export const IconPencil = icon('edit')
+export const IconCpu = icon('memory')
+export const IconShield = icon('shield')
+export const IconEye = icon('visibility')
+export const IconUnlock = icon('lock_open')
+export const IconText = icon('notes')
+export const IconChevronDown = icon('expand_more')
+export const IconCheck = icon('check')
+export const IconSearch = icon('search')
+export const IconKeyboard = icon('keyboard')
+export const IconSettings = icon('settings')
+export const IconFit = icon('fit_screen')
+export const IconStop = icon('stop')
+export const IconStopCircle = icon('stop_circle')
+export const IconTrash = icon('delete')
+export const IconInfo = icon('info')
+export const IconChat = icon('chat')
+export const IconFiles = icon('file_copy')
+export const IconTarget = icon('target')
+export const IconResume = icon('play_circle')
+export const IconAlert = icon('warning')
+export const IconSidebar = icon('left_panel_open')
+export const IconInspect = icon('manage_search')
+export const IconGlobe = icon('language')
+export const IconMenu = icon('menu')
+export const IconSliders = icon('tune')

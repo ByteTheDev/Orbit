@@ -1,13 +1,15 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import type { AgentSummary, Attachment, Message, ToolCall } from '../../types'
 import { attachmentImage, loadDetail, resumeAgent, sendMessage, stopAgent } from '../../lib/actions'
-import { IMAGE_TYPES, MAX_IMAGES, addImages, toUploads, type PendingImage } from '../../lib/chatImages'
+import { addImages, toUploads, type PendingImage } from '../../lib/chatImages'
 import { clock } from '../../lib/format'
 import { toast, useStore } from '../../lib/store'
 import { STATUS_COLOR } from '../../lib/theme'
 import { parseBlocks, parseInline, type Block } from '../../lib/markdown'
 import { toolKind, type ToolKind } from '../../lib/toolKind'
-import { Button, IconCheck, IconPencil, IconPlay, IconStopCircle, IconX, ProviderMark } from '../ui'
+import { Button, IconCheck, IconPencil, IconPlay, IconX, ProviderMark } from '../ui'
+import { ChatComposer } from './ChatComposer'
+import { TalkShowcase } from './TalkShowcase'
 import {
   IconAgent,
   IconChevronRight,
@@ -15,11 +17,9 @@ import {
   IconFileRead,
   IconFileWrite,
   IconGlobe,
-  IconImage,
   IconPlug,
   IconRetry,
   IconSearch,
-  IconSend,
   IconTerminal,
   IconTool,
 } from './inspectorIcons'
@@ -94,7 +94,6 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
   // Why the last attach attempt was refused, shown under the composer.
   const [imageNote, setImageNote] = useState('')
   const [dragging, setDragging] = useState(false)
-  const fileInput = useRef<HTMLInputElement>(null)
   // Set by Stop: a stopped reply should not send the messages queued behind it.
   const stoppedRef = useRef(false)
   const [limit, setLimit] = useState(PAGE)
@@ -251,6 +250,7 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <TalkShowcase agent={agent} />
       <div
         ref={scrollRef}
         onScroll={onScroll}
@@ -306,7 +306,7 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
         )}
       </div>
 
-      <div className="shrink-0 border-t border-line bg-sidebar p-3">
+      <div className="shrink-0 border-t border-line p-3">
         {!busy && caps.resume && agent.turns > 0 && (
           <div className="mb-2 flex justify-end">
             <Button variant="ghost" size="sm" onClick={() => void resumeAgent(agent.id)} className="h-6 px-2 text-label">
@@ -320,7 +320,7 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
           <ul aria-label="Queued messages" className="mb-2 space-y-1">
             {queue.map((q, i) => (
               <li key={i} className="flex items-center gap-2 rounded-lg border border-dashed border-line-strong py-1 pl-2.5 pr-1 text-caption">
-                <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-px text-label text-muted">Queued</span>
+                <span className="shrink-0 rounded bg-tint/[0.06] px-1.5 py-px text-label text-muted">Queued</span>
                 <span className="min-w-0 flex-1 truncate text-muted">
                   {q.text || 'Image'}
                   {q.images.length > 0 && <span className="ml-1.5 text-faint">· {q.images.length} image{q.images.length === 1 ? '' : 's'}</span>}
@@ -341,107 +341,26 @@ export function ChatTab({ agent, messages, tools, loaded, error }: Props) {
         )}
 
         {canSend ? (
-          <div
+          <ChatComposer
+            agent={agent}
+            draft={draft}
+            onDraftChange={updateDraft}
+            onKeyDown={onKey}
+            onPaste={onPaste}
+            images={images}
+            onRemoveImage={(id) => setImagesFor(imagesRef.current.filter((i) => i.id !== id))}
+            imageNote={imageNote}
+            dragging={dragging}
             onDragOver={onDragOver}
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
-            className={`rounded-xl border bg-surface p-2 transition-[border-color,box-shadow] duration-150 hover:border-line-strong focus-within:border-white/25 focus-within:ring-[3px] focus-within:ring-white/[0.06] ${
-              dragging ? 'border-white/40 ring-[3px] ring-white/[0.06]' : 'border-line'
-            }`}
-          >
-            {images.length > 0 && (
-              <ul aria-label="Attached images" className="mb-2 flex flex-wrap gap-2 px-1 pt-1">
-                {images.map((img) => (
-                  <li key={img.id} className="relative">
-                    <img src={img.preview} alt={img.name} title={img.name} className="h-14 w-14 rounded-md border border-line object-cover" />
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Remove ${img.name}`}
-                      title="Remove"
-                      onClick={() => setImagesFor(imagesRef.current.filter((i) => i.id !== img.id))}
-                      className="absolute -right-1.5 -top-1.5 h-5 w-5 rounded-full border border-line bg-canvas px-0"
-                    >
-                      <IconX size={9} />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {imageNote && (
-              <p role="alert" className="mb-1.5 px-1.5 text-caption text-danger-soft">
-                {imageNote}
-              </p>
-            )}
-            <textarea
-              value={draft}
-              onChange={(e) => updateDraft(e.target.value)}
-              onKeyDown={onKey}
-              onPaste={onPaste}
-              aria-busy={sending}
-              placeholder={busy ? `${agent.name} is working. Type to queue your next message.` : `Message ${agent.name}…`}
-              aria-label={`Message ${agent.name}`}
-              rows={2}
-              className="block max-h-40 min-h-[40px] w-full resize-none bg-transparent px-1.5 py-1 text-body leading-relaxed text-ink outline-none placeholder:text-faint"
-            />
-            <div className="mt-1 flex items-center justify-between gap-2 px-1">
-              <span className="truncate text-label text-faint">
-                {busy
-                  ? 'Sends when this reply finishes'
-                  : enterToSend
-                    ? 'Enter to send · Shift+Enter for a new line'
-                    : 'Ctrl+Enter to send · Enter for a new line'}
-              </span>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => fileInput.current?.click()}
-                  disabled={sending || images.length >= MAX_IMAGES}
-                  aria-label="Attach images"
-                  title={images.length >= MAX_IMAGES ? `Up to ${MAX_IMAGES} images per message` : 'Attach images'}
-                  className="h-7 w-7 shrink-0 rounded-md px-0"
-                >
-                  <IconImage size={13} />
-                </Button>
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept={IMAGE_TYPES.join(',')}
-                  multiple
-                  hidden
-                  onChange={(e) => {
-                    void attachFiles(Array.from(e.target.files ?? []))
-                    e.target.value = ''
-                  }}
-                />
-                {busy && caps.stop && !draft.trim() && images.length === 0 ? (
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={onStop}
-                    aria-label="Stop agent"
-                    title="Stop agent"
-                    className="h-7 w-7 shrink-0 rounded-md px-0"
-                  >
-                    <IconStopCircle size={15} />
-                  </Button>
-                ) : (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => void submit()}
-                    disabled={(!draft.trim() && images.length === 0) || sending}
-                    aria-label={busy ? 'Queue message' : 'Send message'}
-                    className="h-7 shrink-0 rounded-md px-3"
-                  >
-                    <IconSend size={12} />
-                    {busy ? 'Queue' : sending ? 'Sending…' : 'Send'}
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
+            onPickFiles={(files) => void attachFiles(files)}
+            busy={busy}
+            sending={sending}
+            onSubmit={() => void submit()}
+            onStop={onStop}
+            enterToSend={enterToSend}
+          />
         ) : (
           <p className="text-caption text-faint">Messages are not available for {agent.providerName}.</p>
         )}
@@ -486,7 +405,7 @@ const MessageView = memo(function MessageView({
           </ul>
         )}
         {m.text && (
-          <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-tr-sm bg-white/[0.06] px-3.5 py-2.5 text-body leading-[1.6] text-ink">
+          <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-xl rounded-tr-sm bg-tint/[0.06] px-3.5 py-2.5 text-body leading-[1.6] text-ink">
             {m.text}
           </div>
         )}
@@ -547,7 +466,7 @@ function ChatImage({ agentId, attachment }: { agentId: string; attachment: Attac
     return <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-line px-2 text-center text-label text-faint">Image unavailable</div>
   }
   if (!src) {
-    return <div role="status" aria-label={`Loading ${attachment.name}`} className="h-24 w-24 animate-pulse rounded-lg border border-line bg-white/[0.04] motion-reduce:animate-none" />
+    return <div role="status" aria-label={`Loading ${attachment.name}`} className="h-24 w-24 animate-pulse rounded-lg border border-line bg-tint/[0.04] motion-reduce:animate-none" />
   }
   return <img src={src} alt={attachment.name} title={attachment.name} className="max-h-48 max-w-[16rem] rounded-lg border border-line object-contain" />
 }
@@ -632,7 +551,7 @@ function inline(text: string): ReactNode[] {
     switch (run.kind) {
       case 'code':
         return (
-          <code key={i} className="rounded bg-white/[0.07] px-1 py-px font-mono text-caption text-ink">
+          <code key={i} className="rounded bg-tint/[0.07] px-1 py-px font-mono text-caption text-ink">
             {run.text}
           </code>
         )
@@ -702,7 +621,7 @@ const ToolRow = memo(function ToolRow({ tool: t }: { tool: ToolCall }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={id}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-caption transition-colors duration-150 hover:bg-white/[0.04]"
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-caption transition-colors duration-150 hover:bg-tint/[0.04]"
       >
         <IconChevronRight size={11} className={`shrink-0 text-faint transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
         <span className={`shrink-0 ${done ? 'text-faint' : 'text-muted'}`}>
@@ -759,7 +678,7 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolCall[] }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={id}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-caption text-muted transition-colors duration-150 hover:bg-white/[0.04] hover:text-ink"
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-caption text-muted transition-colors duration-150 hover:bg-tint/[0.04] hover:text-ink"
       >
         <IconChevronRight size={11} className={`shrink-0 text-faint transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
         <span className="min-w-0 flex-1 truncate">{summarizeTools(tools)}</span>
@@ -842,8 +761,8 @@ function ChatSkeleton() {
     <div className="space-y-5 py-2" role="status" aria-label="Loading conversation">
       {[70, 90, 55].map((w, i) => (
         <div key={i} className={`flex flex-col gap-2 ${i % 2 ? 'items-end' : ''}`}>
-          <div className="h-2 w-16 animate-pulse rounded bg-white/[0.06] motion-reduce:animate-none" />
-          <div className="h-8 animate-pulse rounded-xl bg-white/[0.04] motion-reduce:animate-none" style={{ width: `${w}%` }} />
+          <div className="h-2 w-16 animate-pulse rounded bg-tint/[0.06] motion-reduce:animate-none" />
+          <div className="h-8 animate-pulse rounded-xl bg-tint/[0.04] motion-reduce:animate-none" style={{ width: `${w}%` }} />
         </div>
       ))}
     </div>

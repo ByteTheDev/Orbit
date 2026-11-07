@@ -1,14 +1,12 @@
 // User actions. Each one calls the backend, reports failures as toasts, and keeps
 // components free of error plumbing.
-import type { BrowserPage, ImageUpload, LaunchRequest, ReleaseInfo } from '../types'
+import type { AgentSummary, Automation, BrowserPage, ImageUpload, LaunchRequest, ModelOption, ReleaseInfo } from '../types'
 import { api, errorText } from './bridge'
 import type { PhysicalBounds } from './browserPane'
-import { closeDialog, focusAgent, getState, selectAgent, setDetail, setDetailError, setState, toast } from './store'
+import { carryOverSettings } from './modelSearch'
+import { MAX_THEME_FILE_BYTES, parseThemeFile, type ThemeInfo } from './settings'
+import { addCustomTheme, closeDialog, focusAgent, getState, selectAgent, setDetail, setDetailError, setOnOpenFinished, setState, toast } from './store'
 
-/**
- * Loads the full history of an agent. Safe to call again: it skips agents already loaded,
- * and retries after a failure. A failure is kept in the store so the inspector can offer a retry.
- */
 /**
  * Reads each provider's usage allowance into the store. The backend caches the reading for a few
  * minutes, so polling is cheap; force asks the CLIs again now. Failures leave the last reading in place.
@@ -21,6 +19,10 @@ export async function refreshLimits(force = false): Promise<void> {
   }
 }
 
+/**
+ * Loads the full history of an agent. Safe to call again: it skips agents already loaded,
+ * and retries after a failure. A failure is kept in the store so the inspector can offer a retry.
+ */
 export async function loadDetail(agentId: string): Promise<void> {
   if (getState().details[agentId]?.loaded) return
   try {
@@ -175,6 +177,29 @@ export async function uploadProjectIcon(projectId: string, file: File): Promise<
   }
 }
 
+/**
+ * Reads a theme .json file and returns it for review. Nothing is saved here: the user approves or denies it.
+ * Parsing and checks are in settings.ts; failures become toasts and return null.
+ */
+export async function readThemeFile(file: File): Promise<ThemeInfo | null> {
+  if (file.size > MAX_THEME_FILE_BYTES) {
+    toast('That theme file is larger than 64 KB', 'error')
+    return null
+  }
+  const parsed = parseThemeFile(await file.text())
+  if (!parsed.ok) {
+    toast(parsed.error, 'error')
+    return null
+  }
+  return parsed.theme
+}
+
+/** Saves an approved theme and switches to it. */
+export function approveTheme(theme: ThemeInfo): void {
+  addCustomTheme(theme)
+  toast(`Theme “${theme.name}” added`, 'success')
+}
+
 export async function launchAgent(req: LaunchRequest): Promise<boolean> {
   try {
     const agent = await api.launchAgent(req)
@@ -186,6 +211,77 @@ export async function launchAgent(req: LaunchRequest): Promise<boolean> {
   } catch (err) {
     toast(errorText(err), 'error')
     return false
+  }
+}
+
+/**
+ * Launches a team: the first agent opens, the partners join, and all of them start on the shared task.
+ * The first agent is selected so the talk shows in the inspector. Failures are toasted.
+ */
+export async function launchTeam(first: LaunchRequest, partners: LaunchRequest[], task: string, maxReplies = 8): Promise<boolean> {
+  try {
+    const talk = await api.launchTeam(first, partners, task.trim(), maxReplies)
+    closeDialog()
+    selectAgent(talk.agentAId, { openInspector: true })
+    focusAgent(talk.agentAId)
+    toast(`${talk.members.length} agents are working together on the task`, 'success')
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+/** Brings another agent into an agent's work: the two talk about task until it is done or the reply limit is reached. */
+export async function summonAgent(agentId: string, otherId: string, task: string, maxReplies = 8): Promise<boolean> {
+  try {
+    await api.startTalk(agentId, otherId, task.trim(), maxReplies)
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+/** Ends a talk, and cancels the reply in progress. */
+export async function stopTalk(talkId: string): Promise<boolean> {
+  try {
+    await api.stopTalk(talkId)
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+/** Creates or updates an automation (the id decides which). The new list arrives as an event. */
+export async function saveAutomation(auto: Automation): Promise<boolean> {
+  try {
+    await api.saveAutomation(auto)
+    toast(auto.id ? 'Automation saved' : 'Automation created', 'success')
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+export async function deleteAutomation(id: string): Promise<void> {
+  try {
+    await api.deleteAutomation(id)
+    toast('Automation deleted')
+  } catch (err) {
+    toast(errorText(err), 'error')
+  }
+}
+
+/** Starts the automation's agent now. The agent appears in the galaxy as usual. */
+export async function runAutomation(id: string): Promise<void> {
+  try {
+    await api.runAutomation(id)
+    toast('Started. The agent is in your galaxy.', 'success')
+  } catch (err) {
+    toast(errorText(err), 'error')
   }
 }
 
@@ -278,6 +374,68 @@ export async function checkForUpdates(): Promise<{ latest: ReleaseInfo | null } 
   }
 }
 
+/**
+ * Switches the model an agent uses from its next message. Thinking level and fast mode carry
+ * over only where the new model offers them. Returns false after a failure, which is reported as a toast.
+ */
+export async function setAgentModel(agent: AgentSummary, modelId: string, models: ModelOption[]): Promise<boolean> {
+  const kept = carryOverSettings(models.find((m) => m.id === modelId), agent.effort, agent.fastMode, agent.ultraFast)
+  try {
+    await api.setAgentModel(agent.id, modelId, kept.effort, kept.fast, kept.ultra)
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+/** Moves an agent to another branch of its repository from its next message. It starts a fresh session there. Failures are toasted. */
+export async function setAgentBranch(agent: AgentSummary, branch: string): Promise<boolean> {
+  try {
+    await api.setAgentBranch(agent.id, branch)
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+/** Changes an agent's permission mode from its next message. Failures are toasted. */
+export async function setAgentPermission(agent: AgentSummary, mode: string): Promise<boolean> {
+  try {
+    await api.setAgentPermission(agent.id, mode)
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+/** Changes only the thinking level of an agent's model, from its next message. Failures are toasted. */
+export async function setAgentEffort(agent: AgentSummary, effort: string): Promise<boolean> {
+  try {
+    await api.setAgentModel(agent.id, agent.model, effort, agent.fastMode, agent.ultraFast)
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
+/**
+ * Sets an agent's speed for its model, from its next message: standard, fast or ultrafast. Ultrafast
+ * also turns fast mode on. The backend refuses speeds the model or account does not offer. Failures are toasted.
+ */
+export async function setAgentSpeed(agent: AgentSummary, speed: 'standard' | 'fast' | 'ultrafast'): Promise<boolean> {
+  try {
+    await api.setAgentModel(agent.id, agent.model, agent.effort, speed !== 'standard', speed === 'ultrafast')
+    return true
+  } catch (err) {
+    toast(errorText(err), 'error')
+    return false
+  }
+}
+
 /** Opens a release's page in the default browser. */
 export async function openReleasePage(url: string): Promise<void> {
   try {
@@ -306,3 +464,18 @@ export async function pageViewCommand(command: 'back' | 'forward' | 'reload' | '
     if (command !== 'hide' && command !== 'close') toast(errorText(err), 'error')
   }
 }
+
+/**
+ * Clears the completed mark on an agent the user has opened. Failures are reported as a toast; the
+ * agent keeps its completed mark until a later attempt succeeds.
+ */
+export async function acknowledgeAgent(agentId: string): Promise<void> {
+  try {
+    await api.acknowledgeAgent(agentId)
+  } catch (err) {
+    toast(errorText(err), 'error')
+  }
+}
+
+// Opening a finished agent (see selectAgent in store.ts) clears its completed mark.
+setOnOpenFinished((id) => void acknowledgeAgent(id))

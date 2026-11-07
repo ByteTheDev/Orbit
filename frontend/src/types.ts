@@ -52,6 +52,15 @@ export interface Handoff {
   doneAt?: number
 }
 
+/** One message in a talk: the opening topic (no agentId, from the user) or one agent's reply. */
+export interface ConversationLine {
+  agentId: string
+  name: string
+  provider: string
+  text: string
+  at: number
+}
+
 /** A live talk between two agents in one project. Each reply is passed to the other agent. */
 export interface Conversation {
   id: string
@@ -64,6 +73,10 @@ export interface Conversation {
   nextId: string
   replies: number
   maxReplies: number
+  /** The agents in the talk, in speaking order. agentAId and agentBId are the first two. */
+  members: string[]
+  /** The transcript, oldest first: the topic, then each reply. */
+  lines: ConversationLine[]
   error?: string
   at: number
   doneAt?: number
@@ -91,6 +104,8 @@ export interface ModelOption {
   description: string
   /** True when the provider can run this model in fast mode. */
   fastMode: boolean
+  /** True when the signed-in account can run this model in ultrafast mode. */
+  ultraFast: boolean
   /** Thinking effort levels this model accepts, lowest first. Empty means no effort control. */
   effort: string[]
   /** The level the CLI uses when none is chosen. Informational. */
@@ -123,6 +138,8 @@ export interface AgentSummary {
   providerName: string
   model: string
   task: string
+  /** The git branch the agent works on, when it has its own worktree or was launched on one. */
+  branch?: string
   permissionMode: string
   status: Status
   statusDetail: string
@@ -130,6 +147,8 @@ export interface AgentSummary {
   running: boolean
   /** The agent runs in fast mode. */
   fastMode: boolean
+  /** The agent runs in ultrafast mode, which implies fast mode. */
+  ultraFast: boolean
   /** Thinking effort for this agent's turns. Empty means the CLI default. */
   effort: string
   position?: Point
@@ -254,9 +273,52 @@ export interface ReleaseInfo {
   url: string
 }
 
+/** A scheduled launch. Mirrors internal/model/automation.go. */
+export type SSHAuthMethod = 'password' | 'key' | 'agent'
+
+export interface SSHProfile {
+  id: string
+  name: string
+  host: string
+  port: number
+  user: string
+  auth: SSHAuthMethod
+  password?: string
+  keyPath?: string
+  passphrase?: string
+  createdAt: number
+}
+
+export interface Automation {
+  id: string
+  name: string
+  projectId: string
+  /** A disabled automation keeps its settings but never fires. */
+  enabled: boolean
+  /** Weekdays to run on: 0 is Sunday through 6 is Saturday. Sorted, without duplicates. */
+  days: number[]
+  /** Local time of day, 24-hour "HH:MM". */
+  time: string
+  provider: string
+  /** Empty uses the provider's default model. */
+  model: string
+  /** Empty uses the provider's first permission mode. */
+  permissionMode: string
+  task: string
+  /** Unix milliseconds. */
+  createdAt: number
+  /** Scheduled time of the last slot handled, launched or skipped. Unix milliseconds. */
+  lastRunAt: number
+  /** Why the last run could not start its agent. Empty after a successful run. */
+  lastError: string
+  /** Next scheduled run, Unix milliseconds. 0 when disabled. */
+  nextRunAt: number
+}
+
 export interface Snapshot {
   projects: ProjectSummary[]
   agents: AgentSummary[]
+  automations: Automation[]
   providers: ProviderInfo[]
   statePath: string
   storageError: string
@@ -307,8 +369,23 @@ export interface LaunchRequest {
   task: string
   /** Run in fast mode. The backend refuses it unless the model supports it. */
   fastMode: boolean
+  /** Run in ultrafast mode, which implies fast mode. The backend refuses it unless the account offers it. */
+  ultraFast: boolean
   /** Thinking effort. Empty uses the CLI default. The backend refuses levels the model does not offer. */
   effort: string
+  /** Git branch to work on. Empty uses the project folder as it is. With newBranch, a new branch to create. */
+  branch: string
+  /** Create `branch` from HEAD instead of using an existing one. */
+  newBranch: boolean
+}
+
+/** A project's git branches, for the launch dialog. */
+export interface BranchInfo {
+  /** Checked out in the project folder. Empty when HEAD is detached. */
+  current: string
+  branches: string[]
+  /** Folder that holds this project's worktrees. */
+  worktreeRoot: string
 }
 
 /** One usage window a provider reports, such as the 5-hour or weekly allowance. */

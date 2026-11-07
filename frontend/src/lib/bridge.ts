@@ -4,6 +4,9 @@
 import type {
   AgentDetail,
   AgentSummary,
+  Automation,
+  Conversation,
+  BranchInfo,
   BrowserPage,
   FileDiffResult,
   GitCommit,
@@ -15,6 +18,7 @@ import type {
   ProjectSummary,
   ReleaseInfo,
   Snapshot,
+  SSHProfile,
 } from '../types'
 
 // Lazily loaded so the module still imports when the bindings are absent.
@@ -25,6 +29,7 @@ let bindings: Bindings | null = null
 let runtime: Runtime | null = null
 
 export const EVENT_NAME = 'orbit:events'
+export const AUTOMATIONS_EVENT = 'orbit:automations'
 
 export function inWails(): boolean {
   return typeof window !== 'undefined' && '_wails' in window
@@ -84,6 +89,16 @@ export const api = {
     call<void>((b) => b.SetProjectIconImage(projectId, pngBase64)),
   getProjectIcon: (projectId: string) => call<string>((b) => b.GetProjectIcon(projectId)),
   launchAgent: (req: LaunchRequest) => call<AgentSummary>((b) => b.LaunchAgent(req as never)),
+  launchTeam: (first: LaunchRequest, partners: LaunchRequest[], task: string, maxReplies: number) =>
+    call<Conversation>((b) => b.LaunchTeam(first as never, partners as never, task, maxReplies)),
+  startTalk: (aId: string, bId: string, task: string, maxReplies: number) =>
+    call<Conversation>((b) => b.Collaborate(aId, bId, task, maxReplies)),
+  stopTalk: (talkId: string) => call<void>((b) => b.StopConversation(talkId)),
+  saveAutomation: (auto: Automation) => call<void>((b) => b.SaveAutomation(auto as never)),
+  deleteAutomation: (id: string) => call<void>((b) => b.DeleteAutomation(id)),
+  runAutomation: (id: string) => call<void>((b) => b.RunAutomation(id)),
+  projectBranches: (projectId: string) => call<BranchInfo>((b) => b.ProjectBranches(projectId)),
+  listProjectFiles: (projectId: string, relPath: string) => call<string[]>((b) => b.ListProjectFiles(projectId, relPath)),
   sendMessage: (agentId: string, text: string, images: ImageUpload[]) => call<void>((b) => b.SendMessage(agentId, text, images)),
   attachmentImage: (agentId: string, attachmentId: string) =>
     call<string>((b) => b.AttachmentImage(agentId, attachmentId)),
@@ -92,6 +107,7 @@ export const api = {
   stopAgent: (agentId: string) => call<void>((b) => b.StopAgent(agentId)),
   removeAgent: (agentId: string) => call<void>((b) => b.RemoveAgent(agentId)),
   renameAgent: (agentId: string, name: string) => call<void>((b) => b.RenameAgent(agentId, name)),
+  acknowledgeAgent: (agentId: string) => call<void>((b) => b.AcknowledgeAgent(agentId)),
   setAgentPosition: (agentId: string, x: number, y: number) =>
     call<void>((b) => b.SetAgentPosition(agentId, x, y)),
   openTerminal: (terminalId: string, projectId: string, cols: number, rows: number) =>
@@ -102,6 +118,10 @@ export const api = {
   browserFetch: (address: string) => call<BrowserPage>((b) => b.BrowserFetch(address)),
   browserOpenExternal: (address: string) => call<void>((b) => b.BrowserOpenExternal(address)),
   checkForUpdate: () => call<ReleaseInfo>((b) => b.CheckForUpdate()),
+  setAgentPermission: (agentId: string, mode: string) => call<AgentSummary>((b) => b.SetAgentPermission(agentId, mode)),
+  setAgentBranch: (agentId: string, branch: string) => call<AgentSummary>((b) => b.SetAgentBranch(agentId, branch)),
+  setAgentModel: (agentId: string, modelId: string, effort: string, fastMode: boolean, ultraFast: boolean) =>
+    call<AgentSummary>((b) => b.SetAgentModel(agentId, modelId, effort, fastMode, ultraFast)),
   browserPaneSupported: () => call<boolean>((b) => b.BrowserPaneSupported()),
   browserPaneOpen: (address: string, x: number, y: number, w: number, h: number) =>
     call<void>((b) => b.BrowserPaneOpen(address, x, y, w, h)),
@@ -113,6 +133,26 @@ export const api = {
   browserPaneStop: () => call<void>((b) => b.BrowserPaneStop()),
   browserPaneHide: () => call<void>((b) => b.BrowserPaneHide()),
   browserPaneClose: () => call<void>((b) => b.BrowserPaneClose()),
+  listSSHProfiles: () => call<SSHProfile[]>((b) => b.ListSSHProfiles()),
+  saveSSHProfile: (p: SSHProfile) => call<SSHProfile>((b) => b.SaveSSHProfile(p as never)),
+  deleteSSHProfile: (id: string) => call<void>((b) => b.DeleteSSHProfile(id)),
+  testSSHProfile: (id: string) => call<void>((b) => b.TestSSHProfile(id)),
+  runSSHCommand: (id: string, command: string) => call<string>((b) => b.RunSSHCommand(id, command)),
+}
+
+/** Subscribes to the full automation list, sent whenever it changes. Returns an unsubscribe function. */
+export function onAutomations(handler: (list: Automation[]) => void): () => void {
+  if (!inWails()) return () => {}
+  let off: (() => void) | undefined
+  let cancelled = false
+  void load().then(() => {
+    if (cancelled || !runtime) return
+    off = runtime.Events.On(AUTOMATIONS_EVENT, (event) => handler(event.data as Automation[])) as unknown as () => void
+  })
+  return () => {
+    cancelled = true
+    off?.()
+  }
 }
 
 /** What the native page view reports. Each event carries the full state. */

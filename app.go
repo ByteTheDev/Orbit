@@ -41,6 +41,13 @@ type TerminalOutput struct {
 // saveDelay coalesces bursts of changes into one write.
 const saveDelay = 900 * time.Millisecond
 
+// automationsEvent carries the full automation list whenever it changes.
+const automationsEvent = "orbit:automations"
+
+// automationTick is how often due automations are checked. Slots are compared by time, not counted,
+// so a laptop that wakes from sleep catches up on its next tick.
+const automationTick = 30 * time.Second
+
 // App is the Wails-bound backend. Its exported methods are callable from the frontend.
 type App struct {
 	ctx       context.Context
@@ -97,6 +104,7 @@ func (a *App) startup(ctx context.Context) {
 		a.loadErr = err.Error()
 	}
 	a.mgr.Load(st)
+	go a.runSchedule(ctx)
 }
 
 func (a *App) shutdown(context.Context) {
@@ -183,6 +191,7 @@ func (a *App) saveNow() {
 type Snapshot struct {
 	Projects     []model.ProjectSummary `json:"projects"`
 	Agents       []model.AgentSummary   `json:"agents"`
+	Automations  []model.Automation     `json:"automations"`
 	Providers    []provider.Info        `json:"providers"`
 	StatePath    string                 `json:"statePath"`
 	StorageError string                 `json:"storageError"`
@@ -200,11 +209,59 @@ func (a *App) GetSnapshot() Snapshot {
 	return Snapshot{
 		Projects:     a.mgr.Projects(),
 		Agents:       a.mgr.Agents(),
+		Automations:  a.mgr.Automations(),
 		Providers:    provider.Infos(),
 		StatePath:    a.statePath,
 		StorageError: storageErr,
 		Version:      release.Version,
 	}
+}
+
+// ---- automations ----------------------------------------------------------
+
+// runSchedule launches due automations until the app shuts down.
+func (a *App) runSchedule(ctx context.Context) {
+	ticker := time.NewTicker(automationTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			if a.mgr.RunDueAutomations(now) > 0 {
+				a.emitAutomations(a.mgr.Automations())
+			}
+		}
+	}
+}
+
+// emitAutomations sends the full automation list to the window. The UI keeps no copy of its own.
+func (a *App) emitAutomations(list []model.Automation) {
+	if a.ctx == nil || list == nil {
+		return
+	}
+	a.wails.Event.Emit(automationsEvent, list)
+}
+
+// SaveAutomation creates an automation, or updates the one whose ID is set.
+func (a *App) SaveAutomation(auto model.Automation) error {
+	list, err := a.mgr.SaveAutomation(auto)
+	a.emitAutomations(list)
+	return err
+}
+
+// DeleteAutomation removes an automation. Agents it already launched stay.
+func (a *App) DeleteAutomation(id string) error {
+	list, err := a.mgr.DeleteAutomation(id)
+	a.emitAutomations(list)
+	return err
+}
+
+// RunAutomation starts the automation's agent now, outside its schedule.
+func (a *App) RunAutomation(id string) error {
+	list, err := a.mgr.RunAutomation(id)
+	a.emitAutomations(list)
+	return err
 }
 
 // GetAgentDetail returns the full history of one agent for the inspector.
@@ -455,6 +512,53 @@ func (a *App) emitPaneState(ev webpane.Event) {
 	}
 }
 
+// ---- ssh ----------------------------------------------------------------------
+
+// ListSSHProfiles returns the saved SSH connections, oldest first.
+func (a *App) ListSSHProfiles() []model.SSHProfile {
+	return a.mgr.SSHProfiles()
+}
+
+// SaveSSHProfile creates or updates an SSH connection. It returns the stored profile.
+func (a *App) SaveSSHProfile(p model.SSHProfile) (model.SSHProfile, error) {
+	prof, err := a.mgr.SaveSSHProfile(p)
+	if err == nil {
+		a.scheduleSave()
+	}
+	return prof, err
+}
+
+// DeleteSSHProfile removes a saved SSH connection.
+func (a *App) DeleteSSHProfile(id string) error {
+	err := a.mgr.DeleteSSHProfile(id)
+	if err == nil {
+		a.scheduleSave()
+	}
+	return err
+}
+
+// TestSSHProfile opens the saved connection and runs a trivial command.
+func (a *App) TestSSHProfile(id string) error {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return a.mgr.TestSSHProfile(ctx, id)
+}
+
+// RunSSHCommand runs command on a saved connection and returns its output.
+func (a *App) RunSSHCommand(id, command string) (string, error) {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	return a.mgr.RunSSHCommand(ctx, id, command)
+}
+
 // PickRepository opens a native folder picker. It returns "" when cancelled.
 func (a *App) PickRepository() (string, error) {
 	if a.ctx == nil {
@@ -501,6 +605,17 @@ func (a *App) LaunchAgent(req agent.LaunchRequest) (model.AgentSummary, error) {
 	return a.mgr.Launch(req)
 }
 
+// ListProjectFiles lists the entries in one directory of a project's repository.
+// Used by the chat @-mention autocomplete.
+func (a *App) ListProjectFiles(projectID, relPath string) ([]string, error) {
+	return a.mgr.ListFiles(projectID, relPath)
+}
+
+// ProjectBranches lists a project's git branches for the launch dialog.
+func (a *App) ProjectBranches(projectID string) (model.BranchInfo, error) {
+	return a.mgr.ProjectBranches(projectID)
+}
+
 // SendMessage sends a message with optional images, starting a new turn.
 func (a *App) SendMessage(agentID, text string, images []model.ImageUpload) error {
 	return a.mgr.Send(agentID, text, images)
@@ -520,6 +635,37 @@ func (a *App) DelegateTask(fromID, toID, task string) (model.Handoff, error) {
 // each reply to the other, for up to maxReplies replies.
 func (a *App) StartConversation(aID, bID, topic string, maxReplies int) (model.Conversation, error) {
 	return a.mgr.StartConversation(aID, bID, topic, maxReplies)
+}
+
+// Communicate makes two agents in one project work together on a task, passing each reply to
+// the other until the task is finished or the reply limit is reached.
+func (a *App) Communicate(aID, bID, topic string, maxReplies int) (model.Conversation, error) {
+	return a.mgr.Communicate(aID, bID, topic, maxReplies)
+}
+
+// Collaborate makes two agents work together on a shared task.
+func (a *App) Collaborate(aID, bID, task string, maxReplies int) (model.Conversation, error) {
+	return a.mgr.Collaborate(aID, bID, task, maxReplies)
+}
+
+// LaunchPair creates two agents in one project (first opens) and starts them working together on task.
+func (a *App) LaunchPair(first, partner agent.LaunchRequest, task string, maxReplies int) (model.Conversation, error) {
+	return a.mgr.LaunchPair(first, partner, task, maxReplies)
+}
+
+// LaunchTeam creates the first agent and its partners in one project and starts them working together on task.
+func (a *App) LaunchTeam(first agent.LaunchRequest, partners []agent.LaunchRequest, task string, maxReplies int) (model.Conversation, error) {
+	return a.mgr.LaunchTeam(first, partners, task, maxReplies)
+}
+
+// StartTeam makes the given agents (in speaking order) work together on topic.
+func (a *App) StartTeam(agentIDs []string, topic string, maxReplies int) (model.Conversation, error) {
+	return a.mgr.StartTeam(agentIDs, topic, maxReplies)
+}
+
+// Relay hands a message from one agent to another and asks the receiver to act on it.
+func (a *App) Relay(fromID, toID, message string) (model.Handoff, error) {
+	return a.mgr.Relay(fromID, toID, message)
 }
 
 // StopConversation ends an agent-to-agent talk and cancels the reply in progress.
@@ -542,9 +688,29 @@ func (a *App) RemoveAgent(agentID string) error {
 	return a.mgr.Remove(agentID)
 }
 
+// AcknowledgeAgent clears the completed mark on an agent the user has opened.
+func (a *App) AcknowledgeAgent(agentID string) error {
+	return a.mgr.Acknowledge(agentID)
+}
+
 // RenameAgent changes an agent's display name.
 func (a *App) RenameAgent(agentID, name string) error {
 	return a.mgr.Rename(agentID, name)
+}
+
+// SetAgentModel changes the model, thinking effort, fast mode and ultrafast mode an agent uses from its next turn.
+func (a *App) SetAgentModel(agentID, modelID, effort string, fastMode, ultraFast bool) (model.AgentSummary, error) {
+	return a.mgr.SetModel(agentID, modelID, effort, fastMode, ultraFast)
+}
+
+// SetAgentBranch moves an agent to another branch of its project's repository from its next message.
+func (a *App) SetAgentBranch(agentID, branch string) (model.AgentSummary, error) {
+	return a.mgr.SetBranch(agentID, branch)
+}
+
+// SetAgentPermission changes an agent's permission mode from its next message.
+func (a *App) SetAgentPermission(agentID, mode string) (model.AgentSummary, error) {
+	return a.mgr.SetPermissionMode(agentID, mode)
 }
 
 // SetAgentPosition stores where the user placed an agent.

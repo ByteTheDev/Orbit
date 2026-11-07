@@ -8,7 +8,7 @@ import type { ReleaseInfo } from '../types'
 
 export type { ReleaseInfo }
 
-export const APP_VERSION = '1.0.1'
+export const APP_VERSION = '1.1.0'
 
 /** True when version `a` is newer than `b`. Compares dotted numbers, so "1.0.10" is newer than "1.0.9". */
 export function isNewer(a: string, b: string): boolean {

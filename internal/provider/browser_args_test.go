@@ -49,7 +49,6 @@ func TestCodexArgsRegisterBrowserForNewAndResumedTurns(t *testing.T) {
 		args := codexArgs(spec)
 		want := []string{
 			"-c", `mcp_servers.orbit-browser.command="C:\\Program Files\\Orbit\\orbit.exe"`,
-			"-c", `mcp_servers.orbit-browser.args=["--browser-mcp"]`,
 		}
 		if !containsRun(args, want) {
 			t.Errorf("resume=%v: browser overrides missing from %v", spec.Resume, args)

@@ -38,23 +38,17 @@ export function ActiveAgents({ agents, projects, selectedId, onFocusAgent }: Pro
 
   if (agents.length === 0) return null
 
+  // Nothing waiting and nothing running: the section has nothing to say, so it is not drawn at all.
   const items = [...attention, ...running]
-  if (items.length === 0) {
-    return (
-      <section aria-label="Active agents" className="mx-3 mb-2 flex items-center gap-2 px-1 py-1 text-caption text-faint">
-        <span className="h-1.5 w-1.5 rounded-full border border-current opacity-60" aria-hidden="true" />
-        Nothing running right now
-      </section>
-    )
-  }
+  if (items.length === 0) return null
 
   const shown = showAll ? items : items.slice(0, PREVIEW)
   const hidden = items.length - shown.length
 
   return (
-    <section aria-label="Active agents" className="mx-2 mb-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-1.5 pb-1.5 pt-2">
-      <header className="mb-1 flex items-center justify-between gap-2 px-1.5">
-        <h3 className="text-label font-semibold uppercase tracking-[0.12em] text-faint">Active</h3>
+    <section aria-label="Active agents" className="mx-1.5 mb-2">
+      <header className="mb-1 flex items-center justify-between gap-2 px-2">
+        <h3 className="text-label font-semibold uppercase tracking-[0.12em] text-muted">Active</h3>
         <div className="flex items-center gap-2 text-label tabular-nums">
           {attention.length > 0 && (
             <span className="font-medium text-warn-soft">{attention.length} need{attention.length === 1 ? 's' : ''} attention</span>
@@ -79,8 +73,8 @@ export function ActiveAgents({ agents, projects, selectedId, onFocusAgent }: Pro
                 }}
                 aria-current={selected ? 'true' : undefined}
                 title={`${a.name} · ${projectName}${a.statusDetail ? ` · ${a.statusDetail}` : ''}`}
-                className={`group/active relative flex w-full items-center gap-2 rounded-md py-1.5 pl-2 pr-2 text-left transition-colors duration-150 ${
-                  selected ? 'bg-white/[0.085]' : 'hover:bg-white/[0.05]'
+                className={`nav-item group/active relative flex w-full items-center gap-2 py-0.5 pl-2 pr-2 text-left transition-colors duration-150 ${
+                  selected ? 'bg-nav-active' : 'hover:bg-nav-hover'
                 }`}
               >
                 {needsAttention && (
@@ -89,10 +83,10 @@ export function ActiveAgents({ agents, projects, selectedId, onFocusAgent }: Pro
                 <ProviderMark provider={a.provider} size={16} />
                 <span className="min-w-0 flex-1">
                   <span className="flex min-w-0 items-baseline gap-1.5">
-                    <span className="min-w-0 truncate text-caption font-medium leading-tight text-ink/90">{a.name}</span>
-                    <span className="min-w-0 truncate text-label leading-tight text-faint">{projectName}</span>
+                    <span className="min-w-0 truncate text-caption font-medium leading-tight text-ink">{a.name}</span>
+                    <span className="min-w-0 truncate text-label leading-tight text-muted">{projectName}</span>
                   </span>
-                  {a.statusDetail && <span className="block truncate text-label leading-snug text-faint">{a.statusDetail}</span>}
+                  {a.statusDetail && <span className="block truncate text-label leading-snug text-muted">{a.statusDetail}</span>}
                 </span>
                 <StatusGlyph status={a.status} running={a.running} />
                 {a.running && <ActivitySweep color={STATUS_COLOR[a.status]} />}
@@ -106,7 +100,7 @@ export function ActiveAgents({ agents, projects, selectedId, onFocusAgent }: Pro
         <button
           type="button"
           onClick={() => setShowAll((v) => !v)}
-          className="mt-1 w-full rounded-md px-2 py-1 text-left text-label text-faint transition-colors duration-150 hover:bg-white/[0.04] hover:text-ink"
+          className="nav-item mt-px w-full px-2 py-0.5 text-left text-label text-muted transition-colors duration-150 hover:bg-nav-hover hover:text-ink"
         >
           {showAll ? 'Show fewer' : `Show ${hidden} more`}
         </button>

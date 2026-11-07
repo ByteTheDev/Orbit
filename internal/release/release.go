@@ -16,7 +16,7 @@ import (
 
 // Version is this build's version. The Release panel compares it with the latest release,
 // and a test keeps the frontend copy in step.
-const Version = "1.0.1"
+const Version = "1.1.0"
 
 const repo = "ByteTheDev/Orbit"
 

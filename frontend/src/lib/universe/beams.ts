@@ -1,8 +1,8 @@
 // Agent-to-agent beams: which pairs of planets are connected, and by what. Pure logic, no canvas,
 // so the rules can be tested directly. render.ts draws whatever this returns.
-import type { AgentSummary, Handoff } from '../../types'
+import type { AgentSummary, Conversation, Handoff } from '../../types'
 
-export type BeamKind = 'delegation' | 'handoff' | 'failed' | 'shared'
+export type BeamKind = 'delegation' | 'handoff' | 'failed' | 'shared' | 'talk'
 
 export interface Beam {
   /** Stable across frames, so drawing can key animation phase to it. */
@@ -25,17 +25,29 @@ export const BEAM_COLOR: Record<BeamKind, string> = {
   handoff: '#4ade80',
   failed: '#f87171',
   shared: '#f59e0b',
+  talk: '#c084fc',
 }
 
 /**
  * Connects planets that share work. Handoffs come from the project summaries; a handoff is drawn
- * while active, then for HANDOFF_FADE_MS after it ends. Shared files are derived from each agent's
- * recently touched files: two agents in one project who both touched a file, with a write by either.
- * Beams whose endpoints are not on the galaxy (removed agents) are dropped.
+ * while active, then for HANDOFF_FADE_MS after it ends. A talk is drawn while it is active. Shared
+ * files are derived from each agent's recently touched files: two agents in one project who both
+ * touched a file, with a write by either. Beams whose endpoints are not on the galaxy are dropped.
  */
-export function computeBeams(agents: AgentSummary[], handoffs: Handoff[], now: number): Beam[] {
+export function computeBeams(agents: AgentSummary[], handoffs: Handoff[], now: number, talks: Conversation[] = []): Beam[] {
   const byId = new Map(agents.map((a) => [a.id, a]))
   const beams: Beam[] = []
+
+  for (const c of talks) {
+    if (c.status !== 'active') continue
+    // A pair is one beam. A team is a ring: each member is joined to the next, and the last back to the first.
+    const members = c.members.filter((id) => byId.has(id))
+    if (members.length < 2 || members.length !== c.members.length) continue
+    const links = members.length === 2 ? [[members[0], members[1]]] : members.map((id, i) => [id, members[(i + 1) % members.length]])
+    links.forEach(([fromId, toId], i) => {
+      if (fromId !== toId) beams.push({ key: `t:${c.id}:${i}`, kind: 'talk', fromId, toId, files: [], age: 0 })
+    })
+  }
 
   for (const h of handoffs) {
     if (!byId.has(h.fromId) || !byId.has(h.toId) || h.fromId === h.toId) continue

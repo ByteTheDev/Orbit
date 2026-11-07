@@ -3,6 +3,7 @@ import { STATUS_COLOR } from '../../lib/theme'
 import type { AgentSummary, ProjectSummary } from '../../types'
 import { projectStatus, projectSummary } from './projectSummary'
 import { ProjectMark } from './ProjectMark'
+import { MaterialIcon } from '../ui'
 import { Tooltip } from './Tooltip'
 
 export interface RailProject {
@@ -31,19 +32,20 @@ export function ProjectRail({ rows, activeId, onSelect, onExpand, onKeyDown }: P
           type="button"
           onClick={onExpand}
           aria-label="Expand sidebar"
-          className="mb-1 flex h-8 w-8 items-center justify-center rounded-lg text-faint transition-colors duration-150 hover:bg-white/[0.06] hover:text-ink"
+          className="mb-1 flex h-8 w-8 items-center justify-center rounded-lg text-faint transition-colors duration-150 hover:bg-tint/[0.06] hover:text-ink"
         >
           <RailIcon />
         </button>
       </Tooltip>
-      <span className="mb-1 h-px w-6 bg-white/[0.07]" aria-hidden="true" />
+      <span className="mb-1 h-px w-6 bg-tint/[0.07]" aria-hidden="true" />
 
       <ul role="list" className="flex flex-col items-center gap-1.5">
         {rows.map(({ project, agents }) => {
           const status = projectStatus(agents)
           const active = project.id === activeId
           const running = agents.some((a) => a.running)
-          const summary = projectSummary(project, agents).map((p) => p.text).join(' · ')
+          // The rail has no room for a summary line, so its tooltip and label carry it instead.
+          const summary = projectSummary(project, agents).map((p) => p.text).join(' · ') || 'No agents'
           return (
             <li key={project.id}>
               <Tooltip label={`${project.name} · ${summary}`}>
@@ -54,7 +56,7 @@ export function ProjectRail({ rows, activeId, onSelect, onExpand, onKeyDown }: P
                   aria-label={`${project.name}, ${summary}`}
                   aria-current={active ? 'true' : undefined}
                   className={`relative flex h-9 w-9 items-center justify-center rounded-xl transition-[background-color,box-shadow] duration-150 ${
-                    active ? 'bg-white/[0.085] ring-1 ring-inset ring-white/[0.14]' : 'hover:bg-white/[0.05]'
+                    active ? 'bg-tint/[0.085] ring-1 ring-inset ring-tint/[0.14]' : 'hover:bg-tint/[0.05]'
                   }`}
                 >
                   <ProjectMark project={project} size={24} />
@@ -76,11 +78,5 @@ export function ProjectRail({ rows, activeId, onSelect, onExpand, onKeyDown }: P
 }
 
 function RailIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
-      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
-      <path d="M9.5 4.5v15" />
-      <path d="m13.5 10 2 2-2 2" />
-    </svg>
-  )
+  return <MaterialIcon name="right_panel_open" size={15} />
 }

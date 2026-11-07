@@ -35,3 +35,20 @@ export function groupModels<T extends SearchableModel>(models: T[]): { group: st
   }
   return order.map((group) => ({ group, items: byGroup.get(group) ?? [] }))
 }
+
+/**
+ * What an agent keeps when its model changes. Thinking level, fast mode and ultrafast mode carry over
+ * only when the new model offers them; otherwise they fall back to the provider default.
+ */
+export function carryOverSettings(
+  next: { effort?: string[]; fastMode?: boolean; ultraFast?: boolean } | undefined,
+  effort: string,
+  fast: boolean,
+  ultra = false,
+): { effort: string; fast: boolean; ultra: boolean } {
+  return {
+    effort: effort && next?.effort?.includes(effort) ? effort : '',
+    fast: !!next?.fastMode && fast,
+    ultra: !!next?.ultraFast && ultra,
+  }
+}
